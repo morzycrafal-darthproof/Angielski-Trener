@@ -1,10 +1,10 @@
 {
-  "id": "./?app=english-trainer",
+  "id": "/Angielski-Trener/",
   "name": "English Trainer",
   "short_name": "English",
   "description": "Nauka angielskiego: fiszki, gramatyka, mówienie i dyktando",
-  "start_url": "./?source=pwa",
-  "scope": "./",
+  "start_url": "/Angielski-Trener/",
+  "scope": "/Angielski-Trener/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0e1117",
