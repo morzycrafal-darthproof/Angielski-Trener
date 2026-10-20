@@ -1,0 +1,13 @@
+{
+  "name": "English Trainer",
+  "short_name": "English",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0e1117",
+  "theme_color": "#1f6feb",
+  "lang": "pl",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
