@@ -58,12 +58,15 @@ label{display:block;margin:8px 0 4px;font-size:.9rem;color:var(--muted)}
   <button data-v="listen"><span>🎧</span>Dyktando</button>
 </nav>
 <script src="data.js"></script>
+<script src="b2.js"></script>
 <script>
 // ---------- storage ----------
 const KEY='et_v1';
 function load(){try{return JSON.parse(localStorage.getItem(KEY))||{}}catch(e){return {}}}
-let S=Object.assign({cards:{},custom:[],grammar:{done:0,ok:0,wrong:{}},days:[],settings:{deck:'all',newPerDay:10,newToday:0,newDate:''}},load());
+let S=Object.assign({cards:{},custom:[],grammar:{done:0,ok:0,wrong:{}},days:[],settings:{deck:'b2',newPerDay:15,newToday:0,newDate:'',v:2}},load());
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+// v2: ścieżka B1→B2+ jako domyślna talia, 15 nowych dziennie
+if(!S.settings.v){S.settings.deck='b2';S.settings.newPerDay=15;S.settings.v=2;save()}
 const today=()=>new Date().toISOString().slice(0,10);
 function markActive(){const d=today();if(!S.days.includes(d)){S.days.push(d);save()}}
 function streak(){let n=0,d=new Date();const set=new Set(S.days);
@@ -100,7 +103,8 @@ function grade(w,q){// q: 0 again,3 hard,4 good,5 easy
 const V={};
 V.home=()=>{const {due,fresh}=dueList();const learned=Object.values(S.cards).filter(c=>c.int>=21).length;
   const acc=S.grammar.done?Math.round(S.grammar.ok/S.grammar.done*100):0;
-  return `<div class="card"><div class="muted">Na dziś</div><div class="big">${due.length} powtórek · ${fresh.length} nowych</div>
+  return `${!S.placement&&S.settings.deck==='b2'?`<div class="card"><b>🎯 Test poziomujący</b><p class="muted">Około 5 minut. Słowa, które już znasz, odłożę na rzadkie powtórki, żeby ścieżka zaczęła się od Twojego poziomu.</p><button class="primary" style="width:100%" onclick="go('test')">Zrób test</button></div>`:''}
+  <div class="card"><div class="muted">Na dziś</div><div class="big">${due.length} powtórek · ${fresh.length} nowych</div>
   <div class="row" style="margin-top:10px"><button class="primary" onclick="go('cards')">Zacznij fiszki</button></div></div>
   <div class="card stats"><div><b>${Object.keys(S.cards).length}</b><span class="muted">w nauce</span></div>
   <div><b>${learned}</b><span class="muted">opanowane</span></div><div><b>${acc}%</b><span class="muted">gramatyka</span></div></div>
@@ -108,9 +112,9 @@ V.home=()=>{const {due,fresh}=dueList();const learned=Object.values(S.cards).fil
   <li>Fiszki — wszystkie powtórki + nowe słowa</li><li>Gramatyka — 10 pytań</li><li>Mówienie — 5 zdań na głos</li><li>Dyktando — 5 zdań</li></ol></div>
   <div class="card"><b>Ustawienia</b>
   <label>Talia słówek</label><select onchange="S.settings.deck=this.value;save();render()">
-  ${[['all','Wszystkie'],['it','IT / technika'],['work','Praca i komunikacja'],['general','Ogólne B1–B2'],['custom','Moje słowa']].map(([v,l])=>`<option value="${v}" ${S.settings.deck===v?'selected':''}>${l}</option>`).join('')}</select>
+  ${[['b2','Ścieżka B1 → B2+'],['all','Wszystkie'],['it','IT / technika'],['work','Praca i komunikacja'],['general','Ogólne B1–B2'],['custom','Moje słowa']].map(([v,l])=>`<option value="${v}" ${S.settings.deck===v?'selected':''}>${l}</option>`).join('')}</select>
   <label>Nowych słów dziennie</label><input type="number" min="0" max="50" value="${S.settings.newPerDay}" onchange="S.settings.newPerDay=+this.value||0;save()">
-  <div class="row" style="margin-top:12px"><button onclick="go('add')">➕ Dodaj słowo</button><button onclick="exportData()">⬇️ Eksport</button><button onclick="$('#imp').click()">⬆️ Import</button></div>
+  <div class="row" style="margin-top:12px"><button onclick="go('add')">➕ Dodaj słowo</button><button onclick="go('test')">🎯 Test</button><button onclick="exportData()">⬇️ Eksport</button><button onclick="$('#imp').click()">⬆️ Import</button></div>
   <input type="file" id="imp" accept=".json" class="hidden" onchange="importData(this.files[0])"></div>`};
 
 let cur=null,shown=false,mode='en2pl';
@@ -121,7 +125,7 @@ V.cards=()=>{const {due,fresh}=dueList();const queue=due.concat(fresh);
   const front=mode==='en2pl'?`<div class="big">${esc(w.en)}</div><div class="muted">${esc(w.ipa||'')}</div>`:`<div class="big">${esc(w.pl)}</div><div class="muted">przetłumacz na angielski</div>`;
   if(mode==='en2pl'&&!shown)setTimeout(()=>say(w.en),150);
   return `<div class="muted" style="margin-bottom:8px">${due.length} powtórek · ${fresh.length} nowych</div>
-  <div class="card"><span class="pill">${esc(w.deck)}</span>${isNew?'<span class="pill">nowe</span>':''}
+  <div class="card">${tags(w)}${isNew?'<span class="pill">nowe</span>':''}
   ${front}
   ${shown?`<hr style="border:0;border-top:1px solid var(--border)">
     <div class="big" style="font-size:1.3rem">${esc(mode==='en2pl'?w.pl:w.en)}</div>
@@ -131,6 +135,42 @@ V.cards=()=>{const {due,fresh}=dueList();const queue=due.concat(fresh);
   ${shown?`<div class="row grade"><button class="again" onclick="rate(0)">Nie wiem<br><small>1 min</small></button><button onclick="rate(3)">Trudne</button><button class="good" onclick="rate(4)">Dobrze</button><button onclick="rate(5)">Łatwe</button></div>`
   :`<button class="primary" style="width:100%" onclick="shown=true;render()">Pokaż odpowiedź</button>`}`};
 function rate(q){grade(cur,q);cur=null;render()}
+function tags(w){return w.level?`<span class="pill">${esc(w.level)}</span><span class="pill">${esc(B2_TYPES[w.type]||w.type)}</span>`:`<span class="pill">${esc(w.deck)}</span>`}
+
+// ---------- test poziomujący ----------
+// Próbka 10 pozycji z każdego poziomu. Poziomy zaliczone (≥80%) po kolei od B1 → cały poziom trafia na powtórkę za 30–60 dni.
+let pt=null;
+function startTest(){const items=[];
+  for(const lv of B2_LEVELS){const pool=WORDS.filter(w=>w.deck==='b2'&&w.level===lv&&!S.cards[wid(w)]);
+    items.push(...pool.sort(()=>Math.random()-.5).slice(0,10))}
+  pt={items,i:0,shown:false,known:new Set(),unknown:new Set(),done:null};render()}
+function knownCard(){const int=30+Math.floor(Math.random()*31);return {ef:2.5,reps:3,int,due:Date.now()+int*864e5,lapses:0}}
+function answerT(k){const w=pt.items[pt.i];(k?pt.known:pt.unknown).add(wid(w));pt.i++;pt.shown=false;
+  if(pt.i>=pt.items.length)finishTest();render()}
+function finishTest(){const res={},passed=[];let stop=false;
+  for(const lv of B2_LEVELS){const asked=pt.items.filter(w=>w.level===lv);if(!asked.length)continue;
+    const k=asked.filter(w=>pt.known.has(wid(w))).length;res[lv]=Math.round(k/asked.length*100);
+    if(!stop&&res[lv]>=80)passed.push(lv);else stop=true}
+  let n=0;for(const w of WORDS){if(w.deck!=='b2'||S.cards[wid(w)])continue;const id=wid(w);
+    if(pt.unknown.has(id))continue;
+    if(passed.includes(w.level)||pt.known.has(id)){S.cards[id]=knownCard();n++}}
+  S.placement={date:today(),res,passed};pt.done={res,passed,n};markActive();save()}
+V.test=()=>{
+  if(!pt)return `<div class="card"><b>🎯 Test poziomujący</b><p>Pokażę Ci około 40 pozycji, po 10 z każdego poziomu (B1, B1+, B2, B2+). Przy każdej pomyśl, co znaczy, odkryj odpowiedź i oceń się uczciwie.</p>
+    <p class="muted">Jeśli znasz co najmniej 80% próbki z poziomu, cały poziom odłożę na powtórkę za 30–60 dni. Jeśli coś jednak zapomniałeś, powtórki to wyłapią. Test możesz powtórzyć w każdej chwili.</p>
+    <div class="row"><button onclick="go('home')">Wróć</button><button class="primary" onclick="startTest()">Start</button></div></div>`;
+  if(pt.done){const d=pt.done,next=B2_LEVELS.find(l=>!d.passed.includes(l));
+    return `<div class="card"><div class="big">Wynik testu</div>
+    ${Object.entries(d.res).map(([l,p])=>`<div class="list-item"><span>${l}</span><b class="${p>=80?'w-ok':''}">${p}%</b></div>`).join('')}
+    <p>${next?`Twoja ścieżka zaczyna się od poziomu <b>${next}</b>.`:'Znasz większość materiału, świetnie!'} Odłożono <b>${d.n}</b> pozycji na powtórkę za 30–60 dni.</p>
+    <button class="primary" style="width:100%" onclick="pt=null;go('home')">Gotowe</button></div>`}
+  if(!pt.items.length)return `<div class="card"><p>Wszystkie pozycje ze ścieżki są już w nauce, więc nie ma czego testować.</p><button onclick="pt=null;go('home')">Wróć</button></div>`;
+  const w=pt.items[pt.i];
+  return `<div class="muted" style="margin-bottom:8px">${pt.i+1} / ${pt.items.length}</div>
+  <div class="card">${tags(w)}<div class="big">${esc(w.en)}</div>
+  ${pt.shown?`<hr style="border:0;border-top:1px solid var(--border)"><div class="big" style="font-size:1.3rem">${esc(w.pl)}</div><p><i>${esc(w.ex)}</i></p>`:'<p class="muted">Co to znaczy? Pomyśl, zanim odkryjesz.</p>'}</div>
+  ${pt.shown?`<div class="row grade"><button class="again" onclick="answerT(false)">Nie wiedziałem</button><button class="good" onclick="answerT(true)">Wiedziałem</button></div>`
+  :`<button class="primary" style="width:100%" onclick="pt.shown=true;render()">Pokaż znaczenie</button>`}`};
 
 let gq=null,gAns=null,gSession=0;
 function pickGrammar(){// prefer previously wrong topics
@@ -140,7 +180,7 @@ function pickGrammar(){// prefer previously wrong topics
   return Object.assign({},q,{order:q.opts.map((o,i)=>i).sort(()=>Math.random()-.5)})}
 V.grammar=()=>{if(!gq){gq=pickGrammar();gAns=null}
   const q=gq;return `<div class="muted" style="margin-bottom:8px">Sesja: ${gSession} · ogółem ${S.grammar.ok}/${S.grammar.done}</div>
-  <div class="card"><span class="pill">${esc(q.topic)}</span><p class="big" style="font-size:1.25rem">${esc(q.q)}</p>
+  <div class="card">${q.level?`<span class="pill">${esc(q.level)}</span>`:''}<span class="pill">${esc(q.topic)}</span><p class="big" style="font-size:1.25rem">${esc(q.q)}</p>
   ${q.order.map(i=>{let cls='';if(gAns!==null){if(i===q.a)cls='correct';else if(i===gAns)cls='wrong'}
     return `<button class="opt ${cls}" ${gAns!==null?'disabled':''} onclick="answerG(${i})">${esc(q.opts[i])}</button>`}).join('')}
   ${gAns!==null?`<div class="explain">${gAns===q.a?'✅ Dobrze! ':'❌ '}${esc(q.why)}</div>
@@ -205,7 +245,7 @@ function importData(f){if(!f)return;const r=new FileReader();r.onload=()=>{try{c
 let view='home';
 function go(v){view=v;if(v==='cards')cur=null;render();scrollTo(0,0)}
 function render(){$('#app').innerHTML=V[view]();const s=streak();$('#streak').textContent=s?`🔥 ${s} dni z rzędu`:'';
-  document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.v===view||(view==='add'&&b.dataset.v==='home')))}
+  document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.v===view||((view==='add'||view==='test')&&b.dataset.v==='home')))}
 document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>go(b.dataset.v));
 render();
 if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});

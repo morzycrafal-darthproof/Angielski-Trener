@@ -1,6 +1,6 @@
 // Offline cache. Po zmianie plików podnieś numer wersji, żeby telefon pobrał nową wersję.
-const CACHE = 'english-trainer-v4';
-const FILES = ['./', 'index.html', 'data.js', 'manifest.json', 'icon.svg', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png'];
+const CACHE = 'english-trainer-v5';
+const FILES = ['./', 'index.html', 'data.js', 'b2.js','manifest.json', 'icon.svg', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)));
