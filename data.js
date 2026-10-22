@@ -120,6 +120,21 @@ G('Quantifiers','There isn\'t ___ milk left.',['many','much','a few','few'],1,'M
 G('Quantifiers','I have ___ friends who speak English.',['a little','a few','much','little'],1,'A few + policzalne w lm.; a little + niepoliczalne.'),
 ];
 
+// Scenariusze rozmowy z AI. role i goal trafiają do instrukcji dla modelu (po angielsku).
+const SC=(icon,title,pl,role,goal)=>({icon,title,pl,role,goal});
+const SCENARIOS=[
+SC('💼','Job interview','Rozmowa o pracę','a recruiter at a mid-sized company interviewing the learner for a job they are interested in','ask about 5 typical interview questions (experience, strengths, weaknesses, why this job, questions for you) and react to the answers'),
+SC('🧾','Making a complaint','Reklamacja w sklepie','a shop assistant in an electronics shop; the learner bought headphones that stopped working after a week','handle the complaint: ask what happened, ask for the receipt, offer a repair or replacement, deal with the learner\'s preference'),
+SC('🩺','At the doctor\'s','Wizyta u lekarza','a GP (family doctor) in the UK','ask about symptoms, how long they have lasted, give simple advice and maybe a prescription'),
+SC('🏠','New neighbour','Small talk z sąsiadem','a friendly new neighbour who has just moved in next door','make small talk: introductions, work, the area, hobbies, suggest meeting up some time'),
+SC('🔑','Renting a flat','Wynajem mieszkania','a landlord showing a flat to rent','answer and ask questions about rent, bills, deposit, rules, moving-in date, and agree or not on next steps'),
+SC('📅','Team meeting','Spotkanie w pracy','a team leader running a short weekly meeting','ask the learner for a status update, discuss a delay, agree on next steps and a deadline'),
+SC('✈️','Planning a trip','Planowanie wyjazdu','a friend planning a weekend trip together with the learner','agree on the destination, transport, budget and accommodation, sharing opinions and making suggestions'),
+SC('🍽️','At a restaurant','W restauracji','a waiter in a busy restaurant in London','take the order, answer questions about the menu, deal with a small problem with the dish, handle the bill'),
+SC('📞','Phone call','Rozmowa telefoniczna','a customer service agent at an internet provider; the learner\'s internet has not been working for two days','find out the problem, try basic troubleshooting, arrange a technician visit'),
+SC('⚖️','Debate: remote work','Dyskusja: praca zdalna','a colleague who strongly prefers working in the office','discuss the pros and cons of remote work, politely disagree, ask the learner to justify opinions, find some common ground'),
+];
+
 const S_=(en,pl)=>({en,pl});
 const SENTENCES=[
 S_('Could you repeat that, please?','Czy możesz to powtórzyć?'),

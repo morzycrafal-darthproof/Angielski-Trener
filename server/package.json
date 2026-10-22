@@ -1,0 +1,15 @@
+{
+  "name": "angielski-trener-server",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@google/genai": "2.25.0"
+  }
+}

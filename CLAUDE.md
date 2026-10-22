@@ -20,7 +20,8 @@ Interfejs i wyjaśnienia są po polsku, treść do nauki po angielsku.
 | `index.html` | Cała aplikacja: style, widoki, logika w jednym `<script>` |
 | `data.js` | Treść: `WORDS` (słówka), `GRAMMAR` (pytania), `SENTENCES` (zdania do mówienia i dyktanda) |
 | `b2.js` | Ścieżka B1 → B2+ (talia `b2`, ~440 pozycji) i pytania gramatyczne B2. Ładowane po `data.js`, dopisuje się do `WORDS` i `GRAMMAR` |
-| `sw.js` | Service worker: najpierw sieć, potem cache (`ignoreSearch: true`) |
+| `sw.js` | Service worker: najpierw sieć, potem cache (`ignoreSearch: true`). Obsługuje tylko GET z własnej domeny; zapytania do serwera AI omija |
+| `server/` | Serwer rozmowy z AI (Node, Cloud Run + Gemini). Nie jest częścią PWA, nie trafia do cache |
 | `manifest.json` | Manifest PWA |
 | `icon-192.png`, `icon-512.png`, `icon-maskable-512.png` | Ikony instalacyjne (Android wymaga PNG) |
 | `icon.svg` | Favicon w przeglądarce |
@@ -33,6 +34,16 @@ Interfejs i wyjaśnienia są po polsku, treść do nauki po angielsku.
 - **speak:** rozpoznawanie mowy (`webkitSpeechRecognition`, en-GB). Porównanie słów przez LCS w `compare()`, błędnie wymówione słowa są podkreślane.
 - **listen:** dyktando. Zdanie czytane przez TTS (normalnie lub 🐢 wolniej), wpisany tekst porównywany przez `compare()`.
 - **add:** własne słowa (talia `custom`).
+- **chat:** rozmowa z AI. Scenariusze w `SCENARIOS` (`data.js`, pola `role` i `goal` idą do promptu po angielsku) albo wolny temat. Do serwera wysyłane jest 10 słów z bieżącej nauki (`studyWords()`), bot je wplata. 🎤 dopisuje rozpoznaną mowę do pola tekstowego (można poprawić przed wysłaniem), odpowiedź bota czyta TTS. Poprawki do ostatniej wypowiedzi jako zwinięte `<details>` „💡 N poprawek”, na koniec podsumowanie z przyciskiem ➕ dodającym zwroty do talii `custom`. Adres serwera i kod dostępu w osobnym kluczu localStorage `et_ai` (nie trafia do eksportu), bieżąca rozmowa w `et_chat`.
+
+## Serwer AI (`server/`)
+- **Projekt GCP:** `angielski-trener-mr`, konto rozliczeniowe „Moje konto rozliczeniowe” (okres próbny $300 / 90 dni od ok. 2026-10, przed końcem trzeba zdecydować o przejściu na płatne). Budżet projektu 20 zł/mies. z mailem przy 50/90/100%.
+- **Cloud Run:** usługa `trener-ai`, region `europe-central2`, `https://trener-ai-345959065666.europe-central2.run.app`, max 1 instancja, timeout 60 s.
+- **Gemini:** przez Vertex AI (`@google/genai` z `enterprise: true`), bez klucza API: domyślne konto usługi Compute ma `roles/aiplatform.user`. Model w zmiennej `MODEL` (teraz `gemini-3.5-flash`, dostępny tylko w lokalizacji `global`; `gemini-2.5-flash` już nie działa).
+- **Endpointy:** `POST /chat` → `{reply, corrections[], finished}`, `POST /summary` → `{comment, mistakes[], phrases[], usedWords[]}`. Odpowiedzi w JSON wymuszone przez `responseJsonSchema`. Rozmowa z `thinkingLevel: LOW` (~3 s), podsumowanie z domyślnym.
+- **Dostęp:** nagłówek `X-Access-Code` porównywany ze zmienną `ACCESS_CODE`. **Nie używaj `Authorization: Bearer`**, bo Cloud Run przechwytuje go jako token Google i zwraca 401. Kod leży poza repo w `D:\Claude\Angielski\kod-dostepu.txt`. CORS tylko dla GitHub Pages i `localhost:8000`. Limit 120 zapytań/h.
+- **Zawieszenia Gemini:** część zapytań wisi zamiast odpowiedzieć w kilka sekund, więc `ask()` przerywa po 15 s i ponawia do 3 razy.
+- **Wdrożenie** (z katalogu `server/`, gcloud w `%LOCALAPPDATA%\Google\Cloud SDK\google-cloud-sdk\bin`): `gcloud run deploy trener-ai --source . --region europe-central2 --quiet`. Zmienne środowiskowe zostają z poprzedniej wersji. Logi: `gcloud logging read 'resource.labels.service_name="trener-ai"' --freshness=10m`.
 
 ## Dane (localStorage, klucz `et_v1`)
 ```js
@@ -58,7 +69,7 @@ Nowe karty podawane są w kolejności z plików, więc kolejność w `b2.js` to 
 - Po zmianie sprawdź składnię (`node --check data.js b2.js`), duplikaty `en` w całym `WORDS` i czy `a < opts.length`.
 
 ## WAŻNE: PWA i instalacja (wnioski z debugowania)
-1. **Po każdej zmianie plików podbij wersję `CACHE` w `sw.js`** (obecnie `english-trainer-v6`). Nowe pliki dopisz do `FILES`.
+1. **Po każdej zmianie plików podbij wersję `CACHE` w `sw.js`** (obecnie `english-trainer-v7`). Nowe pliki dopisz do `FILES`.
 2. **Nie zmieniaj `id` w manifeście** (`/Angielski-Trener/`). Chrome po nim rozpoznaje zainstalowaną aplikację. Zmiana `id` tworzy „nową” aplikację i potrafi zablokować instalację. `id`, `start_url` i `scope` są pełnymi ścieżkami `/Angielski-Trener/`. **Nie dodawaj przed nie `./`**, bo wtedy adres wskazuje na `/Angielski-Trener/Angielski-Trener/`.
 3. Android instaluje PWA (WebAPK) tylko z ikonami PNG 192 i 512. Samo SVG daje jedynie skrót.
 4. Historia problemu: pierwsza instalacja (jeszcze bez ikon PNG) się nie dokończyła. Chrome pokazywał potem „Ta aplikacja jest już zainstalowana” i „Nie udało się otworzyć aplikacji”, choć w `chrome://webapks` jej nie było. Nie pomogły zmiana `id`, zmiana nazwy repo, restart telefonu ani czyszczenie cache Google Play. **Pomogło dopiero usunięcie danych przeglądania w Chrome.** Diagnostyka na telefonie: `chrome://webapks` i `chrome://serviceworker-internals`.
@@ -75,6 +86,7 @@ Cel użytkownika: ogólny angielski z poziomu A2/B1 do B2+, 15–20 min dziennie
 3. Tryb z luką: zdanie z przykładu z wykropkowanym słowem (aktywne przypominanie).
 4. Układanie zdań z rozsypanych słów (gramatyka przez wzorce).
 5. Punkty i poziomy (lokalnie).
-6. Ewentualnie: rozmowa z botem AI na własnym kluczu API użytkownika (płatne, zapis tylko w telefonie).
+6. ✅ Rozmowa z AI (Gemini na Cloud Run), patrz „Serwer AI”.
+- Kolejne możliwości na tym samym serwerze: lepsze głosy (Cloud TTS), kopia zapasowa i synchronizacja (Firestore), przypomnienia push (Firebase Cloud Messaging), ocena odpowiedzi pisanych w teście.
 - Kolejne paczki `b2.js` po 300–500 pozycji, gdy talia się kończy.
-- Odrzucone: analiza głosek (Web Speech zwraca tylko słowa), wycinki filmów (prawa autorskie, rozmiar), rankingi ze znajomymi (wymaga serwera), powiadomienia (brak Notification Triggers w Chrome, push wymaga serwera).
+- Odrzucone: analiza głosek (Web Speech i Speech-to-Text zwracają tylko słowa), wycinki filmów (prawa autorskie, rozmiar), rankingi ze znajomymi (jeden użytkownik).

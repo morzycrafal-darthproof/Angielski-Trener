@@ -29,7 +29,7 @@ button:disabled{opacity:.5}
 .again{border-color:var(--bad)!important;color:var(--bad)}
 .good{border-color:var(--ok)!important;color:var(--ok)}
 nav{position:fixed;bottom:0;left:0;right:0;background:var(--card);border-top:1px solid var(--border);display:flex;justify-content:space-around;padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
-nav button{border:0;background:none;font-size:.75rem;padding:6px 4px;display:flex;flex-direction:column;align-items:center;gap:2px;color:var(--muted);flex:1}
+nav button{border:0;background:none;font-size:.7rem;padding:6px 2px;display:flex;flex-direction:column;align-items:center;gap:2px;color:var(--muted);flex:1}
 nav button.active{color:var(--accent);font-weight:600}
 nav span{font-size:1.25rem}
 .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center}
@@ -56,6 +56,7 @@ label{display:block;margin:8px 0 4px;font-size:.9rem;color:var(--muted)}
   <button data-v="grammar"><span>📘</span>Gramatyka</button>
   <button data-v="speak"><span>🎤</span>Mówienie</button>
   <button data-v="listen"><span>🎧</span>Dyktando</button>
+  <button data-v="chat"><span>💬</span>Rozmowa</button>
 </nav>
 <script src="data.js"></script>
 <script src="b2.js"></script>
@@ -237,6 +238,75 @@ V.listen=()=>{if(!ls){ls=SENTENCES[Math.floor(Math.random()*SENTENCES.length)];l
   <button class="primary" style="width:100%;margin-top:10px" onclick="ls=null;render()">Następne</button>`
   :`<button class="primary" style="width:100%;margin-top:10px" onclick="checkDict()">Sprawdź</button>`}</div>`};
 function checkDict(){const t=$('#dict').value;lsRes=Object.assign(compare(ls.en,t),{typed:t});markActive();render()}
+
+// ---------- rozmowa z AI ----------
+// Serwer: folder server/ (Cloud Run + Gemini). Adres i kod w osobnym kluczu, żeby nie trafiały do eksportu.
+const AIKEY='et_ai',CHATKEY='et_chat';
+function lsGet(k){try{return JSON.parse(localStorage.getItem(k))}catch(e){return null}}
+function lsSet(k,v){try{v===null?localStorage.removeItem(k):localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
+let AI=lsGet(AIKEY)||{url:'',code:''};
+let cv=lsGet(CHATKEY),cvBusy=false,cvErr='',cvListening=false;
+// cv = { scenario, words:[{en,pl}], history:[{role:'user'|'bot', text, corrections?}], finished, summary? }
+function saveCv(){lsSet(CHATKEY,cv)}
+function studyWords(){// słowa, których uczysz się teraz (int < 21), uzupełnione kolejnymi nowymi z talii
+  const ws=deckWords(),learning=ws.filter(w=>{const c=S.cards[wid(w)];return c&&c.int<21});
+  const next=ws.filter(w=>!S.cards[wid(w)]).slice(0,10);
+  return shuffle(learning).concat(next).slice(0,10).map(w=>({en:w.en.replace(/^to /,''),pl:w.pl}))}
+async function api(path,body){
+  const r=await fetch(AI.url.replace(/\/$/,'')+path,{method:'POST',headers:{'Content-Type':'application/json','X-Access-Code':AI.code},body:JSON.stringify(body)});
+  const d=await r.json().catch(()=>({error:'Serwer zwrócił błąd '+r.status}));
+  if(!r.ok)throw new Error(d.error||('Błąd '+r.status));return d}
+function payload(){return {scenario:cv.scenario,words:cv.words,history:cv.history.map(m=>({role:m.role,text:m.text}))}}
+async function cvStart(i){const s=i===-1?{title:'Free conversation',topic:($('#cv_topic').value||'').trim()}:SCENARIOS[i];
+  if(i===-1&&!s.topic)return alert('Wpisz temat rozmowy');
+  cv={scenario:s,words:studyWords(),history:[],finished:false};saveCv();await cvCall()}
+async function cvCall(){cvBusy=true;cvErr='';render();
+  try{const d=await api('/chat',payload());
+    const last=cv.history[cv.history.length-1];if(last&&last.role==='user')last.corrections=d.corrections||[];
+    cv.history.push({role:'bot',text:d.reply});cv.finished=!!d.finished;saveCv();say(d.reply);markActive()}
+  catch(e){cvErr=e.message}
+  cvBusy=false;render();const box=$('#cv_log');if(box)box.scrollIntoView({block:'end'})}
+async function cvSend(){const t=($('#cv_in').value||'').trim();if(!t||cvBusy)return;
+  cv.history.push({role:'user',text:t});saveCv();await cvCall()}
+async function cvSummary(){cvBusy=true;cvErr='';render();
+  try{cv.summary=await api('/summary',payload());saveCv()}catch(e){cvErr=e.message}
+  cvBusy=false;render();scrollTo(0,0)}
+function cvRec(){if(!SR||cvListening)return;const r=new SR();r.lang='en-GB';r.interimResults=false;
+  const typed=$('#cv_in').value;cvListening=true;render();$('#cv_in').value=typed;
+  r.onresult=e=>{const t=e.results[0][0].transcript,el=$('#cv_in');el.value=(el.value?el.value+' ':'')+t};
+  r.onerror=e=>{cvErr='Mikrofon: '+e.error};r.onend=()=>{const v=$('#cv_in').value;cvListening=false;render();$('#cv_in').value=v}}
+function cvAdd(i){const p=cv.summary.phrases[i];
+  if(allWords().some(w=>wid(w)===p.en.toLowerCase())){p.added=true;saveCv();return render()}
+  S.custom.push({en:p.en,pl:p.pl,ex:p.ex,deck:'custom'});p.added=true;save();saveCv();render()}
+function cvEnd(){if(cv&&cv.history.length>2&&!cv.summary&&!confirm('Zakończyć bez podsumowania?'))return;cv=null;saveCv();render()}
+function aiSave(){AI={url:$('#ai_url').value.trim(),code:$('#ai_code').value.trim()};lsSet(AIKEY,AI);render()}
+const corrHtml=c=>c.map(x=>`<div><s>${esc(x.wrong)}</s> → <b>${esc(x.right)}</b><br><span class="muted">${esc(x.why)}</span></div>`).join('<hr style="border:0;border-top:1px solid var(--border)">');
+V.chat=()=>{
+  if(!AI.url||!AI.code)return `<div class="card"><b>💬 Rozmowa z AI</b><p class="muted">Rozmowa działa przez Twój serwer w Google Cloud. Wpisz jego adres i kod dostępu. Wystarczy raz, zapisują się tylko na tym telefonie.</p>
+    <label>Adres serwera</label><input id="ai_url" placeholder="https://…run.app" value="${esc(AI.url)}">
+    <label>Kod dostępu</label><input id="ai_code" type="password" value="${esc(AI.code)}">
+    <button class="primary" style="width:100%;margin-top:12px" onclick="aiSave()">Zapisz</button></div>`;
+  if(!cv)return `<div class="card"><b>💬 Wybierz rozmowę</b><p class="muted">Bot wplecie w rozmowę słowa, których się teraz uczysz. Spróbuj ich użyć.</p>
+    ${SCENARIOS.map((s,i)=>`<button class="opt" ${cvBusy?'disabled':''} onclick="cvStart(${i})">${s.icon} <b>${esc(s.pl)}</b> <span class="muted">· ${esc(s.title)}</span></button>`).join('')}
+    <label>…albo wolny temat</label><div class="row"><input id="cv_topic" placeholder="np. my favourite films" style="flex:1"><button onclick="cvStart(-1)">Start</button></div>
+    ${cvErr?`<div class="explain">❌ ${esc(cvErr)}</div>`:''}</div>
+    <p class="muted" style="text-align:center"><a href="#" onclick="AI.code='';render();return false">Zmień serwer lub kod</a></p>`;
+  if(cv.summary){const s=cv.summary;return `<div class="card"><div class="big">Podsumowanie</div><p>${esc(s.comment)}</p>
+    ${s.usedWords&&s.usedWords.length?`<p>✅ Użyte słowa z fiszek: <b>${s.usedWords.map(esc).join(', ')}</b></p>`:''}</div>
+    ${s.mistakes.length?`<div class="card"><b>Błędy do zapamiętania</b><div style="margin-top:8px">${corrHtml(s.mistakes)}</div></div>`:''}
+    ${s.phrases.length?`<div class="card"><b>Zwroty do fiszek</b>${s.phrases.map((p,i)=>`<div class="list-item"><span><b>${esc(p.en)}</b> — ${esc(p.pl)}<br><i class="muted">${esc(p.ex)}</i></span>
+      <button ${p.added?'disabled':''} onclick="cvAdd(${i})">${p.added?'✓':'➕'}</button></div>`).join('')}</div>`:''}
+    <button class="primary" style="width:100%" onclick="cv=null;saveCv();render()">Nowa rozmowa</button>`}
+  const sc=cv.scenario;
+  return `<div class="muted" style="margin-bottom:8px">${esc(sc.icon||'💬')} ${esc(sc.pl||sc.topic||sc.title)} · ${cv.words.length} słów z fiszek</div>
+  <div id="cv_log">${cv.history.map(m=>m.role==='bot'
+    ?`<div class="card" style="margin-right:24px">${esc(m.text)} <button style="padding:2px 8px" onclick="say(${esc(JSON.stringify(m.text))})">🔊</button></div>`
+    :`<div class="card" style="margin-left:24px;background:var(--soft)">${esc(m.text)}
+      ${m.corrections&&m.corrections.length?`<details style="margin-top:6px"><summary class="muted">💡 ${m.corrections.length===1?'1 poprawka':m.corrections.length+' poprawki'}</summary><div class="explain">${corrHtml(m.corrections)}</div></details>`:''}</div>`).join('')}
+  ${cvBusy?'<p class="muted">⏳ Chwila…</p>':''}${cvErr?`<div class="explain">❌ ${esc(cvErr)} <button onclick="cvCall()">Ponów</button></div>`:''}</div>
+  ${cv.finished?'':`<textarea id="cv_in" rows="2" placeholder="Powiedz albo napisz…" ${cvBusy?'disabled':''}></textarea>
+  <div class="row" style="margin-top:8px"><button ${SR&&!cvBusy?'':'disabled'} onclick="cvRec()">${cvListening?'⏺️ Słucham…':'🎤 Mów'}</button><button class="primary" ${cvBusy?'disabled':''} onclick="cvSend()">Wyślij</button></div>`}
+  <div class="row" style="margin-top:8px"><button onclick="cvEnd()">Przerwij</button><button class="good" ${cvBusy||cv.history.length<3?'disabled':''} onclick="cvSummary()">Zakończ i podsumuj</button></div>`};
 
 V.add=()=>`<div class="card"><b>Dodaj własne słowo</b>
   <label>Angielski</label><input id="a_en" placeholder="np. deadline">
