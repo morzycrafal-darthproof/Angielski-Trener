@@ -263,18 +263,25 @@ function payload(){return {scenario:cv.scenario,words:cv.words,history:cv.histor
 async function cvStart(i){const s=i===-1?{title:'Free conversation',topic:($('#cv_topic').value||'').trim()}:SCENARIOS[i];
   if(i===-1&&!s.topic)return alert('Wpisz temat rozmowy');
   cv={scenario:s,words:studyWords(),history:[],finished:false};saveCv();await cvCall()}
-async function cvCall(){cvBusy=true;cvErr='';render();
+// Licznik sekund przy oczekiwaniu: Gemini czasem odpowiada po 20–40 s (serwer ponawia zawieszone zapytania).
+let cvTick=null;
+function cvWait(on){clearInterval(cvTick);if(!on)return;const t0=Date.now();
+  cvTick=setInterval(()=>{const s=Math.round((Date.now()-t0)/1000),el=$('#cv_sec');
+    if(el&&s>=5)el.textContent=`${s} s${s>=15?' — serwer jest dziś wolniejszy, poczekaj':''}`},1000)}
+let cvLast='chat';// co ponawia przycisk „Ponów”
+async function cvCall(){cvLast='chat';cvBusy=true;cvErr='';render();cvWait(true);
   try{const d=await api('/chat',payload());
     const last=cv.history[cv.history.length-1];if(last&&last.role==='user')last.corrections=d.corrections||[];
     cv.history.push({role:'bot',text:d.reply});cv.finished=!!d.finished;saveCv();say(d.reply);markActive()}
   catch(e){cvErr=e.message}
-  cvBusy=false;render();const box=$('#cv_log');if(box)box.scrollIntoView({block:'end'})}
+  cvWait(false);cvBusy=false;render();const box=$('#cv_log');if(box)box.scrollIntoView({block:'end'})}
 async function cvSend(){if(cvBusy)return;cvMicDone();const t=($('#cv_in').value||'').trim();
   if(!t)return cvMicUi('Najpierw powiedz (🎤) albo napisz, co chcesz odpowiedzieć.');
   cv.history.push({role:'user',text:t});saveCv();await cvCall()}
-async function cvSummary(){cvMicDone();cvBusy=true;cvErr='';render();
+async function cvSummary(){cvMicDone();cvLast='summary';cvBusy='summary';cvErr='';render();cvWait(true);
+  const box=$('#cv_log');if(box)box.scrollIntoView({block:'end'});
   try{cv.summary=await api('/summary',payload());saveCv()}catch(e){cvErr=e.message}
-  cvBusy=false;render();scrollTo(0,0)}
+  cvWait(false);cvBusy=false;render();scrollTo(0,0)}
 // Mikrofon jako przełącznik: 🎤 Mów → ⏹️ Gotowe. Na Androidzie Chrome potrafi nie wysłać onend,
 // więc nie czekamy na nie: koniec wymusza przycisk (po 1,5 s) albo bezpiecznik po 30 s.
 // Podczas nasłuchiwania nie wywołujemy render(), tylko podmieniamy tekst w polu i na przycisku.
@@ -325,7 +332,7 @@ V.chat=()=>{
     ?`<div class="card" style="margin-right:24px">${esc(m.text)} <button style="padding:2px 8px" onclick="say(${esc(JSON.stringify(m.text))})">🔊</button></div>`
     :`<div class="card" style="margin-left:24px;background:var(--soft)">${esc(m.text)}
       ${m.corrections&&m.corrections.length?`<details style="margin-top:6px"><summary class="muted">💡 ${m.corrections.length===1?'1 poprawka':m.corrections.length+' poprawki'}</summary><div class="explain">${corrHtml(m.corrections)}</div></details>`:''}</div>`).join('')}
-  ${cvBusy?'<p class="muted">⏳ Chwila…</p>':''}${cvErr?`<div class="explain">❌ ${esc(cvErr)} <button onclick="cvCall()">Ponów</button></div>`:''}</div>
+  ${cvBusy?`<p class="muted">⏳ ${cv.history.some(m=>m.role==='user')&&cvBusy==='summary'?'Analizuję całą rozmowę…':'Chwila…'} <span id="cv_sec"></span></p>`:''}${cvErr?`<div class="explain">❌ ${esc(cvErr)} <button onclick="${cvLast==='summary'?'cvSummary()':'cvCall()'}">Ponów</button></div>`:''}</div>
   ${cv.finished?'':`<textarea id="cv_in" rows="3" placeholder="Powiedz albo napisz…" ${cvBusy?'disabled':''}></textarea>
   <p id="cv_mic_msg" class="muted hidden" style="margin:6px 0 0"></p>
   <div class="row" style="margin-top:8px"><button id="cv_mic" ${SR&&!cvBusy?'':'disabled'} onclick="cvMic()">🎤 Mów</button><button class="primary" ${cvBusy?'disabled':''} onclick="cvSend()">Wyślij</button></div>`}

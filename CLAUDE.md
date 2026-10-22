@@ -38,11 +38,12 @@ Interfejs i wyjaśnienia są po polsku, treść do nauki po angielsku.
 
 ## Serwer AI (`server/`)
 - **Projekt GCP:** `angielski-trener-mr`, konto rozliczeniowe „Moje konto rozliczeniowe” (okres próbny $300 / 90 dni od ok. 2026-10, przed końcem trzeba zdecydować o przejściu na płatne). Budżet projektu 20 zł/mies. z mailem przy 50/90/100%.
-- **Cloud Run:** usługa `trener-ai`, region `europe-central2`, `https://trener-ai-345959065666.europe-central2.run.app`, max 1 instancja, timeout 60 s.
+- **Cloud Run:** usługa `trener-ai`, region `europe-central2`, `https://trener-ai-345959065666.europe-central2.run.app`, max 1 instancja, timeout 120 s.
 - **Gemini:** przez Vertex AI (`@google/genai` z `enterprise: true`), bez klucza API: domyślne konto usługi Compute ma `roles/aiplatform.user`. Model w zmiennej `MODEL` (teraz `gemini-3.5-flash`, dostępny tylko w lokalizacji `global`; `gemini-2.5-flash` już nie działa).
-- **Endpointy:** `POST /chat` → `{reply, corrections[], finished}`, `POST /summary` → `{comment, mistakes[], phrases[], usedWords[]}`. Odpowiedzi w JSON wymuszone przez `responseJsonSchema`. Rozmowa z `thinkingLevel: LOW` (~3 s), podsumowanie z domyślnym.
+- **Endpointy:** `POST /chat` → `{reply, corrections[], finished}`, `POST /summary` → `{comment, mistakes[], phrases[], usedWords[]}`. Odpowiedzi w JSON wymuszone przez `responseJsonSchema`. Oba wywołania z `thinkingLevel: LOW`: rozmowa ~3 s, podsumowanie ~5–11 s. **Domyślny i MEDIUM poziom myślenia przy podsumowaniu długiej rozmowy potrafią trwać ponad 90 s**, nie wracaj do nich.
 - **Dostęp:** nagłówek `X-Access-Code` porównywany ze zmienną `ACCESS_CODE`. **Nie używaj `Authorization: Bearer`**, bo Cloud Run przechwytuje go jako token Google i zwraca 401. Kod leży poza repo w `D:\Claude\Angielski\kod-dostepu.txt`. CORS tylko dla GitHub Pages i `localhost:8000`. Limit 120 zapytań/h.
-- **Zawieszenia Gemini:** część zapytań wisi zamiast odpowiedzieć w kilka sekund, więc `ask()` przerywa po 15 s i ponawia do 3 razy.
+- **Zawieszenia i 429 Gemini:** część zapytań wisi albo dostaje 429 (brak wolnej mocy w `global`), więc `ask()` przerywa po `timeoutMs` (rozmowa 15 s, podsumowanie 35 s) i ponawia do 3 razy, po 429 z odczekaniem. Aplikacja pokazuje licznik sekund przy oczekiwaniu, a „Ponów” ponawia ostatnią akcję (`cvLast`).
+- **Prompt podsumowania:** wypowiedzi pochodzą z rozpoznawania mowy, więc model ma ignorować literówki i źle usłyszane słowa (np. „brad” zamiast „bread”). Wymagamy polskich znaków, bo bez tej instrukcji model potrafił pisać bez nich.
 - **Wdrożenie** (z katalogu `server/`, gcloud w `%LOCALAPPDATA%\Google\Cloud SDK\google-cloud-sdk\bin`): `gcloud run deploy trener-ai --source . --region europe-central2 --quiet`. Zmienne środowiskowe zostają z poprzedniej wersji. Logi: `gcloud logging read 'resource.labels.service_name="trener-ai"' --freshness=10m`.
 
 ## Dane (localStorage, klucz `et_v1`)
@@ -69,7 +70,7 @@ Nowe karty podawane są w kolejności z plików, więc kolejność w `b2.js` to 
 - Po zmianie sprawdź składnię (`node --check data.js b2.js`), duplikaty `en` w całym `WORDS` i czy `a < opts.length`.
 
 ## WAŻNE: PWA i instalacja (wnioski z debugowania)
-1. **Po każdej zmianie plików podbij wersję `CACHE` w `sw.js`** (obecnie `english-trainer-v8`). Nowe pliki dopisz do `FILES`.
+1. **Po każdej zmianie plików podbij wersję `CACHE` w `sw.js`** (obecnie `english-trainer-v9`). Nowe pliki dopisz do `FILES`.
 2. **Nie zmieniaj `id` w manifeście** (`/Angielski-Trener/`). Chrome po nim rozpoznaje zainstalowaną aplikację. Zmiana `id` tworzy „nową” aplikację i potrafi zablokować instalację. `id`, `start_url` i `scope` są pełnymi ścieżkami `/Angielski-Trener/`. **Nie dodawaj przed nie `./`**, bo wtedy adres wskazuje na `/Angielski-Trener/Angielski-Trener/`.
 3. Android instaluje PWA (WebAPK) tylko z ikonami PNG 192 i 512. Samo SVG daje jedynie skrót.
 4. Historia problemu: pierwsza instalacja (jeszcze bez ikon PNG) się nie dokończyła. Chrome pokazywał potem „Ta aplikacja jest już zainstalowana” i „Nie udało się otworzyć aplikacji”, choć w `chrome://webapks` jej nie było. Nie pomogły zmiana `id`, zmiana nazwy repo, restart telefonu ani czyszczenie cache Google Play. **Pomogło dopiero usunięcie danych przeglądania w Chrome.** Diagnostyka na telefonie: `chrome://webapks` i `chrome://serviceworker-internals`.

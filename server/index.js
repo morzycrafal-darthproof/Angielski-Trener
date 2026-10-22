@@ -52,7 +52,7 @@ const CORR = {
     properties: {
       wrong: { type: 'string', description: 'The learner\'s fragment' },
       right: { type: 'string', description: 'Natural corrected version' },
-      why: { type: 'string', description: 'Short explanation in Polish' },
+      why: { type: 'string', description: 'Short explanation in Polish, with Polish diacritics' },
     },
     required: ['wrong', 'right', 'why'],
   },
@@ -95,9 +95,10 @@ function contents(history) {
   }));
 }
 
-// Gemini czasem zawiesza się zamiast odpowiedzieć w 3–9 s, więc przerywamy po 15 s i ponawiamy.
-// Trzy próby mieszczą się w 60 s limitu Cloud Run.
-async function ask(system, history, schema, thinkingLevel) {
+// Gemini czasem zawiesza się albo zwraca 429 (brak wolnej mocy), więc przerywamy po timeoutMs i ponawiamy,
+// po 429 z odczekaniem. Domyślny poziom myślenia przy podsumowaniu potrafi trwać ponad 90 s, dlatego oba
+// wywołania idą z LOW (rozmowa ~3 s, podsumowanie ~5–11 s). Suma prób musi się zmieścić w timeoucie Cloud Run (120 s).
+async function ask(system, history, schema, timeoutMs) {
   for (let attempt = 1; ; attempt++) {
     try {
       const r = await ai.models.generateContent({
@@ -105,14 +106,15 @@ async function ask(system, history, schema, thinkingLevel) {
         contents: contents(history),
         config: {
           systemInstruction: system, responseMimeType: 'application/json', responseJsonSchema: schema, temperature: 0.7,
-          ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
-          httpOptions: { timeout: 15000 },
+          thinkingConfig: { thinkingLevel: 'LOW' },
+          httpOptions: { timeout: timeoutMs },
         },
       });
       return JSON.parse(r.text);
     } catch (e) {
       if (attempt >= 3) throw e;
       console.warn('retry after:', e.message || e);
+      if (/429|RESOURCE_EXHAUSTED/.test(String(e.message))) await new Promise(r => setTimeout(r, 2000 * attempt));
     }
   }
 }
@@ -120,7 +122,7 @@ async function ask(system, history, schema, thinkingLevel) {
 async function chat(body) {
   const history = body.history || [];
   if (!history.length) history.push({ role: 'user', text: '(The learner has just opened the conversation. Start it in role with a short greeting and a first question. Return an empty corrections array.)' });
-  return ask(persona(body), history, CHAT_SCHEMA, 'LOW'); // szybka odpowiedź w rozmowie; podsumowanie myśli dłużej
+  return ask(persona(body), history, CHAT_SCHEMA, 15000);
 }
 
 async function summary(body) {
@@ -129,9 +131,12 @@ async function summary(body) {
 
 The conversation is over. Now act as an English teacher and analyse ONLY the learner's messages (role "user").
 The learner's study words were: ${words || 'none'}.
-Write all explanations in Polish.`;
+The learner SPOKE these messages and speech recognition turned them into text. Therefore:
+- Ignore spelling, punctuation, capital letters and words that were obviously misheard by speech recognition (e.g. "brad" for "bread", "there" for "their"). These are not the learner's mistakes.
+- Focus on grammar, tenses, word order, prepositions, articles, word choice and unnatural phrasing.
+Write all explanations in correct Polish WITH Polish diacritics (ą, ć, ę, ł, ń, ó, ś, ź, ż).`;
   const history = (body.history || []).concat({ role: 'user', text: '(Conversation finished. Return the summary.)' });
-  return ask(system, history, SUMMARY_SCHEMA);
+  return ask(system, history, SUMMARY_SCHEMA, 35000);
 }
 
 // ---------- HTTP ----------
