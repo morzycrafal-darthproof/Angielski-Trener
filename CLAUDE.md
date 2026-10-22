@@ -69,12 +69,13 @@ Nowe karty podawane są w kolejności z plików, więc kolejność w `b2.js` to 
 - Po zmianie sprawdź składnię (`node --check data.js b2.js`), duplikaty `en` w całym `WORDS` i czy `a < opts.length`.
 
 ## WAŻNE: PWA i instalacja (wnioski z debugowania)
-1. **Po każdej zmianie plików podbij wersję `CACHE` w `sw.js`** (obecnie `english-trainer-v7`). Nowe pliki dopisz do `FILES`.
+1. **Po każdej zmianie plików podbij wersję `CACHE` w `sw.js`** (obecnie `english-trainer-v8`). Nowe pliki dopisz do `FILES`.
 2. **Nie zmieniaj `id` w manifeście** (`/Angielski-Trener/`). Chrome po nim rozpoznaje zainstalowaną aplikację. Zmiana `id` tworzy „nową” aplikację i potrafi zablokować instalację. `id`, `start_url` i `scope` są pełnymi ścieżkami `/Angielski-Trener/`. **Nie dodawaj przed nie `./`**, bo wtedy adres wskazuje na `/Angielski-Trener/Angielski-Trener/`.
 3. Android instaluje PWA (WebAPK) tylko z ikonami PNG 192 i 512. Samo SVG daje jedynie skrót.
 4. Historia problemu: pierwsza instalacja (jeszcze bez ikon PNG) się nie dokończyła. Chrome pokazywał potem „Ta aplikacja jest już zainstalowana” i „Nie udało się otworzyć aplikacji”, choć w `chrome://webapks` jej nie było. Nie pomogły zmiana `id`, zmiana nazwy repo, restart telefonu ani czyszczenie cache Google Play. **Pomogło dopiero usunięcie danych przeglądania w Chrome.** Diagnostyka na telefonie: `chrome://webapks` i `chrome://serviceworker-internals`.
 5. **Wspólne dane:** wszystkie PWA autora (Dziennik-HRV, Cupra-Terramar, STGym, Angielski-Trener) działają pod tym samym adresem `morzycrafal-darthproof.github.io`, więc dzielą pamięć przeglądarki. Usunięcie danych witryny kasuje dane **wszystkich** tych aplikacji. Przed takim krokiem zawsze zrób eksport. Klucze localStorage muszą być unikalne (tu `et_v1`).
 6. Rozpoznawanie mowy wymaga HTTPS, więc działa na GitHub Pages, a nie z pliku lokalnego.
+7. **Chrome na Androidzie czasem nie wysyła `onend`** z `SpeechRecognition`. Nie wolno uzależniać stanu UI od `onend`. W rozmowie (`cvMic()`) mikrofon jest przełącznikiem 🎤 Mów / ⏹️ Gotowe, a koniec wymusza przycisk (po 1,5 s) albo bezpiecznik po 30 s. Podczas nasłuchiwania nie wywołujemy `render()` (skasowałby tekst w polu), tylko podmieniamy tekst w `#cv_in`, `#cv_mic` i `#cv_mic_msg`. W module Mówienie (`rec()`) bezpiecznik 15 s. Błędy mikrofonu opisuje `MIC_ERR`. W panelu przeglądarki Claude mikrofon jest zablokowany, więc testujemy atrapą `window.SpeechRecognition`.
 
 ## Testowanie
 Brak testów automatycznych. Lokalnie: `npx http-server -p 8000 -c-1` (na tym komputerze nie ma Pythona) w katalogu repo i otwarcie `http://localhost:8000`. Service worker działa na localhost, rozpoznawanie mowy tylko w Chrome i Safari.

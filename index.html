@@ -226,8 +226,11 @@ function rec(){if(!SR||listening)return;const r=new SR();r.lang='en-GB';r.interi
   r.onresult=e=>{const alts=[...e.results[0]].map(a=>a.transcript);let best=null;
     for(const a of alts){const c=compare(sp.en,a);if(!best||c.score>best.score)best=Object.assign(c,{said:a})}
     spRes=best;markActive()};
-  r.onerror=e=>{spRes={score:0,html:'Błąd mikrofonu: '+esc(e.error),said:''}};
-  r.onend=()=>{listening=false;render()};r.start()}
+  r.onerror=e=>{spRes={score:0,html:'Błąd mikrofonu: '+esc(MIC_ERR[e.error]||e.error),said:''}};
+  // bezpiecznik: Chrome na Androidzie czasem nie wysyła onend
+  const done=()=>{if(!listening)return;listening=false;clearTimeout(g);try{r.abort()}catch(e){}render()},g=setTimeout(done,15000);
+  r.onend=done;if('speechSynthesis'in window)speechSynthesis.cancel();
+  try{r.start()}catch(e){done()}}
 
 let ls=null,lsRes=null;
 V.listen=()=>{if(!ls){ls=SENTENCES[Math.floor(Math.random()*SENTENCES.length)];lsRes=null;setTimeout(()=>say(ls.en,0.9),200)}
@@ -245,7 +248,7 @@ const AIKEY='et_ai',CHATKEY='et_chat';
 function lsGet(k){try{return JSON.parse(localStorage.getItem(k))}catch(e){return null}}
 function lsSet(k,v){try{v===null?localStorage.removeItem(k):localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
 let AI=lsGet(AIKEY)||{url:'',code:''};
-let cv=lsGet(CHATKEY),cvBusy=false,cvErr='',cvListening=false;
+let cv=lsGet(CHATKEY),cvBusy=false,cvErr='';
 // cv = { scenario, words:[{en,pl}], history:[{role:'user'|'bot', text, corrections?}], finished, summary? }
 function saveCv(){lsSet(CHATKEY,cv)}
 function studyWords(){// słowa, których uczysz się teraz (int < 21), uzupełnione kolejnymi nowymi z talii
@@ -266,19 +269,38 @@ async function cvCall(){cvBusy=true;cvErr='';render();
     cv.history.push({role:'bot',text:d.reply});cv.finished=!!d.finished;saveCv();say(d.reply);markActive()}
   catch(e){cvErr=e.message}
   cvBusy=false;render();const box=$('#cv_log');if(box)box.scrollIntoView({block:'end'})}
-async function cvSend(){const t=($('#cv_in').value||'').trim();if(!t||cvBusy)return;
+async function cvSend(){if(cvBusy)return;cvMicDone();const t=($('#cv_in').value||'').trim();
+  if(!t)return cvMicUi('Najpierw powiedz (🎤) albo napisz, co chcesz odpowiedzieć.');
   cv.history.push({role:'user',text:t});saveCv();await cvCall()}
-async function cvSummary(){cvBusy=true;cvErr='';render();
+async function cvSummary(){cvMicDone();cvBusy=true;cvErr='';render();
   try{cv.summary=await api('/summary',payload());saveCv()}catch(e){cvErr=e.message}
   cvBusy=false;render();scrollTo(0,0)}
-function cvRec(){if(!SR||cvListening)return;const r=new SR();r.lang='en-GB';r.interimResults=false;
-  const typed=$('#cv_in').value;cvListening=true;render();$('#cv_in').value=typed;
-  r.onresult=e=>{const t=e.results[0][0].transcript,el=$('#cv_in');el.value=(el.value?el.value+' ':'')+t};
-  r.onerror=e=>{cvErr='Mikrofon: '+e.error};r.onend=()=>{const v=$('#cv_in').value;cvListening=false;render();$('#cv_in').value=v}}
+// Mikrofon jako przełącznik: 🎤 Mów → ⏹️ Gotowe. Na Androidzie Chrome potrafi nie wysłać onend,
+// więc nie czekamy na nie: koniec wymusza przycisk (po 1,5 s) albo bezpiecznik po 30 s.
+// Podczas nasłuchiwania nie wywołujemy render(), tylko podmieniamy tekst w polu i na przycisku.
+let cvRecog=null,cvGuard=null;
+const MIC_ERR={'not-allowed':'Brak dostępu do mikrofonu. Zezwól na mikrofon w ustawieniach strony w Chrome.','service-not-allowed':'Brak dostępu do mikrofonu. Zezwól na mikrofon w ustawieniach strony w Chrome.',
+  'no-speech':'Nic nie usłyszałem. Naciśnij 🎤 i spróbuj jeszcze raz.','audio-capture':'Mikrofon jest niedostępny (może używa go inna aplikacja).','network':'Rozpoznawanie mowy wymaga internetu.'};
+function cvMicUi(msg){const b=$('#cv_mic'),s=$('#cv_mic_msg');
+  if(b){b.textContent=cvRecog?'⏹️ Gotowe':'🎤 Mów';b.classList.toggle('again',!!cvRecog)}
+  if(s&&msg!==undefined){s.textContent=msg;s.classList.toggle('hidden',!msg)}}
+function cvMicDone(msg){clearTimeout(cvGuard);const r=cvRecog;cvRecog=null;
+  if(r){r.onresult=r.onerror=r.onend=null;try{r.abort()}catch(e){}}
+  cvMicUi(msg===undefined?'':msg)}
+function cvMic(){const R=window.SpeechRecognition||window.webkitSpeechRecognition;if(!R||cvBusy)return;
+  if(cvRecog){try{cvRecog.stop()}catch(e){}clearTimeout(cvGuard);cvGuard=setTimeout(()=>cvMicDone(),1500);return}
+  if('speechSynthesis'in window)speechSynthesis.cancel();// bot nie może mówić do mikrofonu
+  const el=$('#cv_in'),base=el.value.trim()?el.value.trim()+' ':'';
+  const r=new R();r.lang='en-GB';r.interimResults=true;r.maxAlternatives=1;
+  r.onresult=e=>{let t='';for(const x of e.results)t+=x[0].transcript;el.value=base+t.trim()};
+  r.onerror=e=>{if(e.error!=='aborted')cvMicDone(MIC_ERR[e.error]||('Mikrofon: '+e.error))};
+  r.onend=()=>{if(cvRecog===r)cvMicDone()};
+  cvRecog=r;cvGuard=setTimeout(()=>cvMicDone(),30000);
+  try{r.start();cvMicUi('🎙️ Mów po angielsku, a potem naciśnij ⏹️ Gotowe.')}catch(e){cvMicDone('Nie udało się włączyć mikrofonu: '+e.message)}}
 function cvAdd(i){const p=cv.summary.phrases[i];
   if(allWords().some(w=>wid(w)===p.en.toLowerCase())){p.added=true;saveCv();return render()}
   S.custom.push({en:p.en,pl:p.pl,ex:p.ex,deck:'custom'});p.added=true;save();saveCv();render()}
-function cvEnd(){if(cv&&cv.history.length>2&&!cv.summary&&!confirm('Zakończyć bez podsumowania?'))return;cv=null;saveCv();render()}
+function cvEnd(){cvMicDone();if(cv&&cv.history.length>2&&!cv.summary&&!confirm('Zakończyć bez podsumowania?'))return;cv=null;saveCv();render()}
 function aiSave(){AI={url:$('#ai_url').value.trim(),code:$('#ai_code').value.trim()};lsSet(AIKEY,AI);render()}
 const corrHtml=c=>c.map(x=>`<div><s>${esc(x.wrong)}</s> → <b>${esc(x.right)}</b><br><span class="muted">${esc(x.why)}</span></div>`).join('<hr style="border:0;border-top:1px solid var(--border)">');
 V.chat=()=>{
@@ -304,9 +326,10 @@ V.chat=()=>{
     :`<div class="card" style="margin-left:24px;background:var(--soft)">${esc(m.text)}
       ${m.corrections&&m.corrections.length?`<details style="margin-top:6px"><summary class="muted">💡 ${m.corrections.length===1?'1 poprawka':m.corrections.length+' poprawki'}</summary><div class="explain">${corrHtml(m.corrections)}</div></details>`:''}</div>`).join('')}
   ${cvBusy?'<p class="muted">⏳ Chwila…</p>':''}${cvErr?`<div class="explain">❌ ${esc(cvErr)} <button onclick="cvCall()">Ponów</button></div>`:''}</div>
-  ${cv.finished?'':`<textarea id="cv_in" rows="2" placeholder="Powiedz albo napisz…" ${cvBusy?'disabled':''}></textarea>
-  <div class="row" style="margin-top:8px"><button ${SR&&!cvBusy?'':'disabled'} onclick="cvRec()">${cvListening?'⏺️ Słucham…':'🎤 Mów'}</button><button class="primary" ${cvBusy?'disabled':''} onclick="cvSend()">Wyślij</button></div>`}
-  <div class="row" style="margin-top:8px"><button onclick="cvEnd()">Przerwij</button><button class="good" ${cvBusy||cv.history.length<3?'disabled':''} onclick="cvSummary()">Zakończ i podsumuj</button></div>`};
+  ${cv.finished?'':`<textarea id="cv_in" rows="3" placeholder="Powiedz albo napisz…" ${cvBusy?'disabled':''}></textarea>
+  <p id="cv_mic_msg" class="muted hidden" style="margin:6px 0 0"></p>
+  <div class="row" style="margin-top:8px"><button id="cv_mic" ${SR&&!cvBusy?'':'disabled'} onclick="cvMic()">🎤 Mów</button><button class="primary" ${cvBusy?'disabled':''} onclick="cvSend()">Wyślij</button></div>`}
+  <div class="row" style="margin-top:8px"><button onclick="cvEnd()">Przerwij</button><button class="good" ${cvBusy||!cv.history.some(m=>m.role==='user')?'disabled':''} onclick="cvSummary()">Zakończ i podsumuj</button></div>`};
 
 V.add=()=>`<div class="card"><b>Dodaj własne słowo</b>
   <label>Angielski</label><input id="a_en" placeholder="np. deadline">
