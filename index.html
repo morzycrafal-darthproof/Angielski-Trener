@@ -138,26 +138,37 @@ function rate(q){grade(cur,q);cur=null;render()}
 function tags(w){return w.level?`<span class="pill">${esc(w.level)}</span><span class="pill">${esc(B2_TYPES[w.type]||w.type)}</span>`:`<span class="pill">${esc(w.deck)}</span>`}
 
 // ---------- test poziomujący ----------
-// Próbka 10 pozycji z każdego poziomu. Poziomy zaliczone (≥80%) po kolei od B1 → cały poziom trafia na powtórkę za 30–60 dni.
+// Próbka 10 pozycji z każdego poziomu, wybór polskiego znaczenia z 4 opcji albo „nie wiem”.
+// Wynik poziomu = (trafienia − błędy/3) / pytania — korekta za zgadywanie. Poziomy ≥80% po kolei od B1 → powtórka za 30–60 dni.
 let pt=null;
+const shuffle=a=>a.sort(()=>Math.random()-.5);
+const isVerb=w=>/^to /i.test(w.en);// czasownik dostaje dystraktory-czasowniki, żeby nie odpadały po formie
+function testOpts(w){const b2=WORDS.filter(x=>x.deck==='b2'&&x.pl!==w.pl&&isVerb(x)===isVerb(w));
+  const same=shuffle(b2.filter(x=>x.type===w.type&&x.level===w.level)),near=shuffle(b2.filter(x=>x.type===w.type));
+  const pl=[];for(const x of same.concat(near))if(!pl.includes(x.pl)&&pl.length<3)pl.push(x.pl);
+  return shuffle(pl.concat(w.pl))}
 function startTest(){const items=[];
   for(const lv of B2_LEVELS){const pool=WORDS.filter(w=>w.deck==='b2'&&w.level===lv&&!S.cards[wid(w)]);
-    items.push(...pool.sort(()=>Math.random()-.5).slice(0,10))}
-  pt={items,i:0,shown:false,known:new Set(),unknown:new Set(),done:null};render()}
+    items.push(...shuffle(pool).slice(0,10))}
+  pt={items,i:0,opts:items.length?testOpts(items[0]):[],ans:null,ok:new Set(),bad:new Set(),done:null};render()}
 function knownCard(){const int=30+Math.floor(Math.random()*31);return {ef:2.5,reps:3,int,due:Date.now()+int*864e5,lapses:0}}
-function answerT(k){const w=pt.items[pt.i];(k?pt.known:pt.unknown).add(wid(w));pt.i++;pt.shown=false;
-  if(pt.i>=pt.items.length)finishTest();render()}
+function answerT(i){// i: indeks opcji albo -1 = nie wiem
+  const w=pt.items[pt.i];pt.ans=i;
+  if(i>=0&&pt.opts[i]===w.pl){pt.ok.add(wid(w));render();setTimeout(nextT,600)}
+  else{if(i>=0)pt.bad.add(wid(w));render()}}
+function nextT(){pt.i++;pt.ans=null;if(pt.i>=pt.items.length)finishTest();else pt.opts=testOpts(pt.items[pt.i]);render()}
 function finishTest(){const res={},passed=[];let stop=false;
   for(const lv of B2_LEVELS){const asked=pt.items.filter(w=>w.level===lv);if(!asked.length)continue;
-    const k=asked.filter(w=>pt.known.has(wid(w))).length;res[lv]=Math.round(k/asked.length*100);
+    const r=asked.filter(w=>pt.ok.has(wid(w))).length,b=asked.filter(w=>pt.bad.has(wid(w))).length;
+    res[lv]=Math.max(0,Math.round((r-b/3)/asked.length*100));
     if(!stop&&res[lv]>=80)passed.push(lv);else stop=true}
   let n=0;for(const w of WORDS){if(w.deck!=='b2'||S.cards[wid(w)])continue;const id=wid(w);
-    if(pt.unknown.has(id))continue;
-    if(passed.includes(w.level)||pt.known.has(id)){S.cards[id]=knownCard();n++}}
+    const asked=pt.items.includes(w);if(asked&&!pt.ok.has(id))continue;
+    if(passed.includes(w.level)||pt.ok.has(id)){S.cards[id]=knownCard();n++}}
   S.placement={date:today(),res,passed};pt.done={res,passed,n};markActive();save()}
 V.test=()=>{
-  if(!pt)return `<div class="card"><b>🎯 Test poziomujący</b><p>Pokażę Ci około 40 pozycji, po 10 z każdego poziomu (B1, B1+, B2, B2+). Przy każdej pomyśl, co znaczy, odkryj odpowiedź i oceń się uczciwie.</p>
-    <p class="muted">Jeśli znasz co najmniej 80% próbki z poziomu, cały poziom odłożę na powtórkę za 30–60 dni. Jeśli coś jednak zapomniałeś, powtórki to wyłapią. Test możesz powtórzyć w każdej chwili.</p>
+  if(!pt)return `<div class="card"><b>🎯 Test poziomujący</b><p>Pokażę Ci około 40 pozycji, po 10 z każdego poziomu (B1, B1+, B2, B2+). Przy każdej wybierz polskie znaczenie z 4 opcji.</p>
+    <p class="muted">Nie zgaduj. Jeśli nie wiesz, wybierz „Nie wiem”, bo za błędną odpowiedź odejmuję punkty. Poziom z wynikiem co najmniej 80% odłożę na powtórkę za 30–60 dni. Test możesz powtórzyć w każdej chwili.</p>
     <div class="row"><button onclick="go('home')">Wróć</button><button class="primary" onclick="startTest()">Start</button></div></div>`;
   if(pt.done){const d=pt.done,next=B2_LEVELS.find(l=>!d.passed.includes(l));
     return `<div class="card"><div class="big">Wynik testu</div>
@@ -168,9 +179,10 @@ V.test=()=>{
   const w=pt.items[pt.i];
   return `<div class="muted" style="margin-bottom:8px">${pt.i+1} / ${pt.items.length}</div>
   <div class="card">${tags(w)}<div class="big">${esc(w.en)}</div>
-  ${pt.shown?`<hr style="border:0;border-top:1px solid var(--border)"><div class="big" style="font-size:1.3rem">${esc(w.pl)}</div><p><i>${esc(w.ex)}</i></p>`:'<p class="muted">Co to znaczy? Pomyśl, zanim odkryjesz.</p>'}</div>
-  ${pt.shown?`<div class="row grade"><button class="again" onclick="answerT(false)">Nie wiedziałem</button><button class="good" onclick="answerT(true)">Wiedziałem</button></div>`
-  :`<button class="primary" style="width:100%" onclick="pt.shown=true;render()">Pokaż znaczenie</button>`}`};
+  ${pt.opts.map((o,i)=>{let cls='';if(pt.ans!==null){if(o===w.pl)cls='correct';else if(i===pt.ans)cls='wrong'}
+    return `<button class="opt ${cls}" ${pt.ans!==null?'disabled':''} onclick="answerT(${i})">${esc(o)}</button>`}).join('')}
+  ${pt.ans===null?`<button class="opt" style="color:var(--muted)" onclick="answerT(-1)">🤷 Nie wiem</button>`
+  :pt.opts[pt.ans]===w.pl?'':`<div class="explain"><i>${esc(w.ex)}</i></div><button class="primary" style="width:100%;margin-top:10px" onclick="nextT()">Dalej</button>`}</div>`};
 
 let gq=null,gAns=null,gSession=0;
 function pickGrammar(){// prefer previously wrong topics

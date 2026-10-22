@@ -27,7 +27,7 @@ Interfejs i wyjaśnienia są po polsku, treść do nauki po angielsku.
 
 ## Moduły (widoki w obiekcie `V`, routing przez `go(view)` → `render()`)
 - **home:** plan dnia, statystyki, ustawienia (talia, limit nowych słów dziennie), dodawanie słów, eksport/import JSON. Jeśli talia to `b2` i nie było testu, pokazuje zaproszenie do testu poziomującego.
-- **test:** test poziomujący. Próbka 10 pozycji z każdego poziomu (`B2_LEVELS`), użytkownik odkrywa znaczenie i ocenia się sam. Poziomy z wynikiem ≥80% zaliczane są kolejno od B1 (pierwszy niezaliczony przerywa ciąg). Wszystkie pozycje zaliczonych poziomów i pojedyncze „wiedziałem” dostają kartę z `int` 30–60 dni (`knownCard()`), więc wracają na kontrolę. Odpowiedzi „nie wiedziałem” zostają nowe.
+- **test:** test poziomujący oceniany przez aplikację. Próbka 10 pozycji z każdego poziomu (`B2_LEVELS`). Przy każdej wybór polskiego znaczenia z 4 opcji albo „Nie wiem”. Błędne opcje (`testOpts()`) pochodzą z tego samego typu (najpierw z tego samego poziomu), a czasowniki (`to …`) dostają tylko czasowniki. Wynik poziomu = (trafienia − błędy/3) / pytania, czyli korekta za zgadywanie. Poziomy z wynikiem ≥80% zaliczane są kolejno od B1 (pierwszy niezaliczony przerywa ciąg). Wszystkie pozycje zaliczonych poziomów i pojedyncze trafienia dostają kartę z `int` 30–60 dni (`knownCard()`), więc wracają na kontrolę. Błędy i „nie wiem” zostają nowe.
 - **cards:** fiszki z algorytmem SM-2 (`grade(w, q)`: 0 = nie wiem, 3 = trudne, 4 = dobrze, 5 = łatwe). Kierunek EN→PL albo PL→EN losowany, wymowa przez `speechSynthesis` (en-GB).
 - **grammar:** pytania jednokrotnego wyboru z wyjaśnieniem. Tematy z błędami wracają częściej (`S.grammar.wrong[topic]`).
 - **speak:** rozpoznawanie mowy (`webkitSpeechRecognition`, en-GB). Porównanie słów przez LCS w `compare()`, błędnie wymówione słowa są podkreślane.
@@ -58,7 +58,7 @@ Nowe karty podawane są w kolejności z plików, więc kolejność w `b2.js` to 
 - Po zmianie sprawdź składnię (`node --check data.js b2.js`), duplikaty `en` w całym `WORDS` i czy `a < opts.length`.
 
 ## WAŻNE: PWA i instalacja (wnioski z debugowania)
-1. **Po każdej zmianie plików podbij wersję `CACHE` w `sw.js`** (obecnie `english-trainer-v5`). Nowe pliki dopisz do `FILES`.
+1. **Po każdej zmianie plików podbij wersję `CACHE` w `sw.js`** (obecnie `english-trainer-v6`). Nowe pliki dopisz do `FILES`.
 2. **Nie zmieniaj `id` w manifeście** (`/Angielski-Trener/`). Chrome po nim rozpoznaje zainstalowaną aplikację. Zmiana `id` tworzy „nową” aplikację i potrafi zablokować instalację. `id`, `start_url` i `scope` są pełnymi ścieżkami `/Angielski-Trener/`. **Nie dodawaj przed nie `./`**, bo wtedy adres wskazuje na `/Angielski-Trener/Angielski-Trener/`.
 3. Android instaluje PWA (WebAPK) tylko z ikonami PNG 192 i 512. Samo SVG daje jedynie skrót.
 4. Historia problemu: pierwsza instalacja (jeszcze bez ikon PNG) się nie dokończyła. Chrome pokazywał potem „Ta aplikacja jest już zainstalowana” i „Nie udało się otworzyć aplikacji”, choć w `chrome://webapks` jej nie było. Nie pomogły zmiana `id`, zmiana nazwy repo, restart telefonu ani czyszczenie cache Google Play. **Pomogło dopiero usunięcie danych przeglądania w Chrome.** Diagnostyka na telefonie: `chrome://webapks` i `chrome://serviceworker-internals`.
