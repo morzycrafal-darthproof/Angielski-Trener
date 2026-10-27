@@ -21,7 +21,7 @@ Interfejs i wyjaśnienia są po polsku, treść do nauki po angielsku.
 | `data.js` | Treść: `WORDS` (słówka), `GRAMMAR` (pytania), `SENTENCES` (zdania do mówienia i dyktanda) |
 | `b2.js` | Ścieżka B1 → B2+ (talia `b2`, ~440 pozycji) i pytania gramatyczne B2. Ładowane po `data.js`, dopisuje się do `WORDS` i `GRAMMAR` |
 | `sw.js` | Service worker: najpierw sieć, potem cache (`ignoreSearch: true`). Obsługuje tylko GET z własnej domeny; zapytania do serwera AI omija |
-| `server/` | Serwer rozmowy z AI (Node, Cloud Run + Gemini). Nie jest częścią PWA, nie trafia do cache |
+| `server/` | Serwer na Cloud Run: rozmowa z AI (`index.js`, Gemini) i przypomnienia (`push.js`, web push + Firestore). Nie jest częścią PWA, nie trafia do cache |
 | `manifest.json` | Manifest PWA |
 | `icon-192.png`, `icon-512.png`, `icon-maskable-512.png` | Ikony instalacyjne (Android wymaga PNG) |
 | `icon.svg` | Favicon w przeglądarce |
@@ -44,7 +44,15 @@ Interfejs i wyjaśnienia są po polsku, treść do nauki po angielsku.
 - **Dostęp:** nagłówek `X-Access-Code` porównywany ze zmienną `ACCESS_CODE`. **Nie używaj `Authorization: Bearer`**, bo Cloud Run przechwytuje go jako token Google i zwraca 401. Kod leży poza repo w `D:\Claude\Angielski\kod-dostepu.txt`. CORS tylko dla GitHub Pages i `localhost:8000`. Limit 120 zapytań/h.
 - **Zawieszenia i 429 Gemini:** część zapytań wisi albo dostaje 429 (brak wolnej mocy w `global`), więc `ask()` przerywa po `timeoutMs` (rozmowa 15 s, podsumowanie 35 s) i ponawia do 3 razy, po 429 z odczekaniem. Aplikacja pokazuje licznik sekund przy oczekiwaniu, a „Ponów” ponawia ostatnią akcję (`cvLast`).
 - **Prompt podsumowania:** wypowiedzi pochodzą z rozpoznawania mowy, więc model ma ignorować literówki i źle usłyszane słowa (np. „brad” zamiast „bread”). Wymagamy polskich znaków, bo bez tej instrukcji model potrafił pisać bez nich.
-- **Wdrożenie** (z katalogu `server/`, gcloud w `%LOCALAPPDATA%\Google\Cloud SDK\google-cloud-sdk\bin`): `gcloud run deploy trener-ai --source . --region europe-central2 --quiet`. Zmienne środowiskowe zostają z poprzedniej wersji. Logi: `gcloud logging read 'resource.labels.service_name="trener-ai"' --freshness=10m`.
+- **Wdrożenie** (z katalogu `server/`, gcloud w `%LOCALAPPDATA%\Google\Cloud SDK\google-cloud-sdk\bin`): `gcloud run deploy trener-ai --source . --region europe-central2 --quiet`. Zmienne środowiskowe zostają z poprzedniej wersji. Do zmiany jednej zmiennej używaj `--update-env-vars`, nigdy `--set-env-vars` (kasuje pozostałe, w tym `ACCESS_CODE`).
+
+## Przypomnienia (`server/push.js`)
+- **Działanie:** Cloud Scheduler (`przypomnienia`, europe-central2, `*/15 7-23 * * *`, Europe/Warsaw) woła `POST /push/tick` z nagłówkiem `X-Access-Code`. Serwer wysyła powiadomienie, gdy minęła godzina `first` (domyślnie 19:00) albo `second` (21:30), tego dnia nie było nauki i ten slot jeszcze nie poszedł. Jeśli minęły obie godziny, idzie tylko drugie.
+- **Stan:** Firestore (`(default)`, europe-central2), jeden dokument `reminders/me`: `subscription`, `on`, `first`, `second`, `lastStudy`, `report` (karty dziś i jutro, minuty, seria), `sent`. `lastStudy` tylko rośnie, więc raport spóźniony (np. po nauce offline) nie cofa daty. Testowo dokument kasuje się przez REST Firestore (DELETE `.../documents/reminders/me`).
+- **Endpointy:** `GET /push/key` (publiczny klucz VAPID), `POST /push/subscribe`, `/push/activity`, `/push/tick`, `/push/test`. Odpowiedź 404/410 od usługi push = subskrypcja wygasła, serwer ją usuwa.
+- **Klucze VAPID:** zmienne `VAPID_PUBLIC` i `VAPID_PRIVATE` w Cloud Run; kopia poza repo w `D:\Claude\Angielski\vapid.json`. Zmiana kluczy unieważnia subskrypcję na telefonie (trzeba wyłączyć i włączyć przypomnienia).
+- **Aplikacja:** karta „🔔 Przypomnienia” na ekranie Start (`remindCard()`), ustawienia w `S.settings.remind`. Raport `remindReport()` przy pierwszej nauce danego dnia (z `markActive()`) i przy otwarciu aplikacji (najwyżej co 10 min). Wymaga skonfigurowanego serwera z zakładki Rozmowa. Kliknięcie w powiadomienie otwiera `?v=cards`, a otwarte okno dostaje `postMessage({go})` od service workera.
+- W panelu przeglądarki Claude powiadomienia są zablokowane, więc dostarczenie testujemy na telefonie (przycisk „Wyślij test”), a logikę decyzji przez `curl` z fałszywą subskrypcją. Logi: `gcloud logging read 'resource.labels.service_name="trener-ai"' --freshness=10m`.
 
 ## Dane (localStorage, klucz `et_v1`)
 ```js
@@ -70,7 +78,7 @@ Nowe karty podawane są w kolejności z plików, więc kolejność w `b2.js` to 
 - Po zmianie sprawdź składnię (`node --check data.js b2.js`), duplikaty `en` w całym `WORDS` i czy `a < opts.length`.
 
 ## WAŻNE: PWA i instalacja (wnioski z debugowania)
-1. **Po każdej zmianie plików podbij wersję `CACHE` w `sw.js`** (obecnie `english-trainer-v9`). Nowe pliki dopisz do `FILES`.
+1. **Po każdej zmianie plików podbij wersję `CACHE` w `sw.js`** (obecnie `english-trainer-v10`). Nowe pliki dopisz do `FILES`.
 2. **Nie zmieniaj `id` w manifeście** (`/Angielski-Trener/`). Chrome po nim rozpoznaje zainstalowaną aplikację. Zmiana `id` tworzy „nową” aplikację i potrafi zablokować instalację. `id`, `start_url` i `scope` są pełnymi ścieżkami `/Angielski-Trener/`. **Nie dodawaj przed nie `./`**, bo wtedy adres wskazuje na `/Angielski-Trener/Angielski-Trener/`.
 3. Android instaluje PWA (WebAPK) tylko z ikonami PNG 192 i 512. Samo SVG daje jedynie skrót.
 4. Historia problemu: pierwsza instalacja (jeszcze bez ikon PNG) się nie dokończyła. Chrome pokazywał potem „Ta aplikacja jest już zainstalowana” i „Nie udało się otworzyć aplikacji”, choć w `chrome://webapks` jej nie było. Nie pomogły zmiana `id`, zmiana nazwy repo, restart telefonu ani czyszczenie cache Google Play. **Pomogło dopiero usunięcie danych przeglądania w Chrome.** Diagnostyka na telefonie: `chrome://webapks` i `chrome://serviceworker-internals`.
@@ -89,6 +97,7 @@ Cel użytkownika: ogólny angielski z poziomu A2/B1 do B2+, 15–20 min dziennie
 4. Układanie zdań z rozsypanych słów (gramatyka przez wzorce).
 5. Punkty i poziomy (lokalnie).
 6. ✅ Rozmowa z AI (Gemini na Cloud Run), patrz „Serwer AI”.
-- Kolejne możliwości na tym samym serwerze: lepsze głosy (Cloud TTS), kopia zapasowa i synchronizacja (Firestore), przypomnienia push (Firebase Cloud Messaging), ocena odpowiedzi pisanych w teście.
+7. ✅ Przypomnienia o nauce (web push), patrz „Przypomnienia”.
+- Kolejne możliwości na tym samym serwerze: lepsze głosy (Cloud TTS), kopia zapasowa i synchronizacja postępów (Firestore już działa), ocena odpowiedzi pisanych w teście.
 - Kolejne paczki `b2.js` po 300–500 pozycji, gdy talia się kończy.
 - Odrzucone: analiza głosek (Web Speech i Speech-to-Text zwracają tylko słowa), wycinki filmów (prawa autorskie, rozmiar), rankingi ze znajomymi (jeden użytkownik).

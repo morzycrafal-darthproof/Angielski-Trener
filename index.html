@@ -69,7 +69,7 @@ function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
 // v2: ścieżka B1→B2+ jako domyślna talia, 15 nowych dziennie
 if(!S.settings.v){S.settings.deck='b2';S.settings.newPerDay=15;S.settings.v=2;save()}
 const today=()=>new Date().toISOString().slice(0,10);
-function markActive(){const d=today();if(!S.days.includes(d)){S.days.push(d);save()}}
+function markActive(){const d=today();if(!S.days.includes(d)){S.days.push(d);save();remindReport(true)}}
 function streak(){let n=0,d=new Date();const set=new Set(S.days);
   if(!set.has(today()))d.setDate(d.getDate()-1);
   while(set.has(d.toISOString().slice(0,10))){n++;d.setDate(d.getDate()-1)}return n}
@@ -116,7 +116,8 @@ V.home=()=>{const {due,fresh}=dueList();const learned=Object.values(S.cards).fil
   ${[['b2','Ścieżka B1 → B2+'],['all','Wszystkie'],['it','IT / technika'],['work','Praca i komunikacja'],['general','Ogólne B1–B2'],['custom','Moje słowa']].map(([v,l])=>`<option value="${v}" ${S.settings.deck===v?'selected':''}>${l}</option>`).join('')}</select>
   <label>Nowych słów dziennie</label><input type="number" min="0" max="50" value="${S.settings.newPerDay}" onchange="S.settings.newPerDay=+this.value||0;save()">
   <div class="row" style="margin-top:12px"><button onclick="go('add')">➕ Dodaj słowo</button><button onclick="go('test')">🎯 Test</button><button onclick="exportData()">⬇️ Eksport</button><button onclick="$('#imp').click()">⬆️ Import</button></div>
-  <input type="file" id="imp" accept=".json" class="hidden" onchange="importData(this.files[0])"></div>`};
+  <input type="file" id="imp" accept=".json" class="hidden" onchange="importData(this.files[0])"></div>
+  ${remindCard()}`};
 
 let cur=null,shown=false,mode='en2pl';
 V.cards=()=>{const {due,fresh}=dueList();const queue=due.concat(fresh);
@@ -353,14 +354,62 @@ function exportData(){const b=new Blob([JSON.stringify(S,null,1)],{type:'applica
 function importData(f){if(!f)return;const r=new FileReader();r.onload=()=>{try{const d=JSON.parse(r.result);if(!d.cards)throw 0;
   if(confirm('Zastąpić obecne postępy danymi z pliku?')){S=Object.assign(S,d);save();render()}}catch(e){alert('Nieprawidłowy plik')}};r.readAsText(f)}
 
+// ---------- przypomnienia (web push) ----------
+// Serwer (server/push.js) wysyła przypomnienie o S.settings.remind.first i .second, tylko w dni bez nauki.
+// Aplikacja raportuje mu datę ostatniej nauki i liczbę kart czekających dziś i jutro.
+const RM=()=>S.settings.remind||(S.settings.remind={on:false,first:'19:00',second:'21:30'});
+let rmMsg='',rmBusy=false,rmSentAt=0;
+const b64=s=>{const p=(s+'='.repeat((4-s.length%4)%4)).replace(/-/g,'+').replace(/_/g,'/');return Uint8Array.from(atob(p),c=>c.charCodeAt(0))};
+function remindCard(){const r=RM(),perm='Notification'in window?Notification.permission:'brak';
+  return `<div class="card"><b>🔔 Przypomnienia</b>
+  ${r.on?`<p class="muted">Przyjdą tylko w dni, w które jeszcze się nie uczyłeś.</p>
+    <div class="row"><div style="flex:1"><label>Pierwsze</label><input type="time" value="${r.first}" onchange="remindTimes('first',this.value)"></div>
+    <div style="flex:1"><label>Ostatnie</label><input type="time" value="${r.second}" onchange="remindTimes('second',this.value)"></div></div>
+    <div class="row" style="margin-top:12px"><button ${rmBusy?'disabled':''} onclick="remindTest()">📨 Wyślij test</button><button ${rmBusy?'disabled':''} onclick="remindOff()">🔕 Wyłącz</button></div>`
+  :`<p class="muted">Codziennie o ${r.first}, a jeśli dalej nic, o ${r.second}. Tylko w dni bez nauki.</p>
+    <button class="primary" style="width:100%" ${rmBusy||perm==='brak'?'disabled':''} onclick="remindOn()">Włącz przypomnienia</button>
+    ${perm==='denied'?'<p class="muted">Powiadomienia są zablokowane. Odblokuj je w Chrome: ⋮ → Ustawienia → Ustawienia witryn → Powiadomienia.</p>':''}`}
+  ${rmMsg?`<p class="muted">${esc(rmMsg)}</p>`:''}</div>`}
+function rmDone(msg){rmBusy=false;rmMsg=msg;if(view==='home')render()}
+async function remindOn(){
+  if(!AI.url||!AI.code)return rmDone('Najpierw podaj adres serwera i kod w zakładce 💬 Rozmowa. Przypomnienia wysyła ten sam serwer.');
+  rmBusy=true;rmMsg='Włączam…';render();
+  try{
+    if(await Notification.requestPermission()!=='granted')return rmDone('Bez zgody na powiadomienia przypomnienia nie zadziałają.');
+    const reg=await navigator.serviceWorker.ready;
+    const {key}=await (await fetch(AI.url.replace(/\/$/,'')+'/push/key')).json();
+    let sub=await reg.pushManager.getSubscription();
+    if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64(key)});
+    const r=RM();await api('/push/subscribe',{subscription:sub.toJSON(),on:true,first:r.first,second:r.second});
+    r.on=true;save();await remindReport(true);rmDone('Gotowe. Możesz wysłać test.')}
+  catch(e){rmDone('Nie udało się włączyć: '+e.message)}}
+async function remindOff(){rmBusy=true;render();
+  try{await api('/push/subscribe',{on:false});RM().on=false;save();rmDone('Przypomnienia wyłączone.')}catch(e){rmDone('Błąd: '+e.message)}}
+async function remindTimes(k,v){const r=RM();if(!/^\d\d:\d\d$/.test(v))return;r[k]=v;save();
+  try{await api('/push/subscribe',{on:r.on,first:r.first,second:r.second});rmDone(`Zapisane: ${r.first} i ${r.second}.`)}catch(e){rmDone('Nie zapisano godziny: '+e.message)}}
+async function remindTest(){rmBusy=true;rmMsg='Wysyłam…';render();
+  try{const d=await api('/push/test',{});rmDone(d.ok?'Wysłane. Powiadomienie powinno pojawić się za kilka sekund.':d.error)}catch(e){rmDone('Błąd: '+e.message)}}
+// Raport dla serwera: przy pierwszej nauce danego dnia od razu, przy otwarciu aplikacji najwyżej co 10 min.
+async function remindReport(force){const r=RM();if(!r.on||!AI.url||!AI.code)return;
+  if(!force&&Date.now()-rmSentAt<6e5)return;rmSentAt=Date.now();
+  const words=deckWords(),now=Date.now(),eod=new Date();eod.setHours(23,59,59,999);const eot=eod.getTime()+864e5;
+  let dueNow=0,dueTom=0,fresh=0;for(const w of words){const c=S.cards[wid(w)];if(!c)fresh++;else{if(c.due<=now)dueNow++;if(c.due<=eot)dueTom++}}
+  const perDay=Math.min(fresh,S.settings.newPerDay),todayNew=Math.min(fresh,Math.max(0,S.settings.newPerDay-(S.settings.newDate===today()?S.settings.newToday:0)));
+  const cards=dueNow+todayNew;
+  try{await api('/push/activity',{lastStudy:S.days[S.days.length-1]||'',cards,cardsTomorrow:dueTom+perDay,minutes:Math.ceil(cards/3),streak:streak()})}catch(e){}}
+
 // ---------- router ----------
 let view='home';
 function go(v){view=v;if(v==='cards')cur=null;render();scrollTo(0,0)}
 function render(){$('#app').innerHTML=V[view]();const s=streak();$('#streak').textContent=s?`🔥 ${s} dni z rzędu`:'';
   document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.v===view||((view==='add'||view==='test')&&b.dataset.v==='home')))}
 document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>go(b.dataset.v));
+// ?v=cards z kliknięcia w przypomnienie (nowe okno) albo komunikat od service workera (okno już otwarte)
+{const v=new URLSearchParams(location.search).get('v');if(v&&V[v])view=v;}
 render();
-if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+if('serviceWorker'in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});
+  navigator.serviceWorker.addEventListener('message',e=>{if(e.data&&V[e.data.go])go(e.data.go)})}
+remindReport();document.addEventListener('visibilitychange',()=>{if(!document.hidden)remindReport()});
 </script>
 </body>
 </html>

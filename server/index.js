@@ -4,6 +4,7 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { GoogleGenAI } from '@google/genai';
+import * as reminders from './push.js';
 
 const PORT = process.env.PORT || 8080;
 const MODEL = process.env.MODEL || 'gemini-3.5-flash';
@@ -145,7 +146,7 @@ function send(res, code, obj, origin) {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Headers': 'Content-Type, X-Access-Code',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Vary': 'Origin',
   });
   res.end(obj === null ? '' : JSON.stringify(obj));
@@ -155,7 +156,14 @@ http.createServer(async (req, res) => {
   const origin = ORIGINS.includes(req.headers.origin) ? req.headers.origin : ORIGINS[0];
   if (req.method === 'OPTIONS') return send(res, 204, null, origin);
   if (req.method === 'GET' && req.url === '/') return send(res, 200, { ok: true }, origin);
-  if (req.method !== 'POST' || !['/chat', '/summary'].includes(req.url)) return send(res, 404, { error: 'not found' }, origin);
+  if (req.method === 'GET' && req.url === '/push/key') return send(res, 200, reminders.publicKey(), origin);
+  const routes = {
+    '/chat': chat, '/summary': summary,
+    '/push/subscribe': reminders.subscribe, '/push/activity': reminders.activity,
+    '/push/tick': reminders.tick, // woła Cloud Scheduler z tym samym nagłówkiem X-Access-Code
+    '/push/test': reminders.test,
+  };
+  if (req.method !== 'POST' || !routes[req.url]) return send(res, 404, { error: 'not found' }, origin);
   // Własny nagłówek: Cloud Run przechwytuje „Authorization: Bearer” jako token Google.
   if (!codeOk(req.headers['x-access-code'])) return send(res, 401, { error: 'Zły kod dostępu' }, origin);
   if (!rateOk()) return send(res, 429, { error: 'Limit zapytań na godzinę wyczerpany' }, origin);
@@ -163,7 +171,7 @@ http.createServer(async (req, res) => {
   for await (const chunk of req) { raw += chunk; if (raw.length > 100e3) return send(res, 413, { error: 'Za duże zapytanie' }, origin); }
   try {
     const body = JSON.parse(raw || '{}');
-    const out = req.url === '/chat' ? await chat(body) : await summary(body);
+    const out = await routes[req.url](body);
     send(res, 200, out, origin);
   } catch (e) {
     console.error(e);
