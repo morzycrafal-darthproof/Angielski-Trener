@@ -43,6 +43,8 @@ label{display:block;margin:8px 0 4px;font-size:.9rem;color:var(--muted)}
 .w-ok{color:var(--ok);font-weight:600}.w-bad{color:var(--bad);text-decoration:underline wavy}
 .pill{display:inline-block;font-size:.75rem;padding:2px 8px;border-radius:99px;background:var(--soft);color:var(--accent);margin-right:4px}
 .hidden{display:none}
+.toast{position:fixed;left:16px;right:16px;bottom:84px;max-width:608px;margin:0 auto;background:var(--text);color:var(--bg);border-radius:12px;padding:12px 14px;font-size:.9rem;opacity:0;transform:translateY(10px);transition:.2s;pointer-events:none;z-index:10}
+.toast.show{opacity:1;transform:none}
 .list-item{display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);font-size:.92rem}
 .list-item:last-child{border:0}
 </style>
@@ -77,11 +79,36 @@ const $=s=>document.querySelector(s);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 // ---------- speech ----------
-function say(text,rate=0.95){if(!('speechSynthesis'in window))return;speechSynthesis.cancel();
-  const u=new SpeechSynthesisUtterance(text);u.lang='en-GB';u.rate=rate;
-  const v=speechSynthesis.getVoices().find(v=>/en[-_]GB/i.test(v.lang))||speechSynthesis.getVoices().find(v=>/^en/i.test(v.lang));
-  if(v)u.voice=v;speechSynthesis.speak(u)}
-if('speechSynthesis'in window)speechSynthesis.onvoiceschanged=()=>{};
+// Pułapki Chrome na Androidzie: speak() zaraz po cancel() bywa gubione, syntezator potrafi utknąć w pauzie
+// po powrocie z tła, a wybrany głos może być niedostępny (wtedy cisza bez błędu). Dlatego: cancel tylko gdy
+// coś gra i z odstępem, resume() przed każdym speak, a gdy nic nie zacznie grać w 2,5 s albo przyjdzie błąd,
+// jedna ponowna próba z domyślnym głosem. Dopiero potem komunikat (toast).
+let ttsUtt=null,ttsInfo='';// referencja chroni wypowiedź przed GC (inny znany błąd Chrome)
+function ttsVoice(){const vs=speechSynthesis.getVoices(),gb=vs.filter(v=>/en[-_]GB/i.test(v.lang));
+  return gb.find(v=>v.localService)||gb[0]||vs.find(v=>/^en[-_]/i.test(v.lang)&&v.localService)||vs.find(v=>/^en/i.test(v.lang))}
+function say(text,rate=0.95,report){// report: true = test (pokaż, co gra), 'auto' = odtwarzanie bez kliknięcia (bez komunikatów)
+  const s=window.speechSynthesis;
+  if(!s)return toast('Ta przeglądarka nie odtwarza mowy.');
+  const busy=s.speaking||s.pending;if(busy)s.cancel();
+  const attempt=n=>{try{s.resume()}catch(e){}
+    const u=new SpeechSynthesisUtterance(text);u.lang='en-GB';u.rate=rate;
+    const v=n===1&&ttsVoice();if(v)u.voice=v;
+    let started=false,failed=false;
+    const fail=why=>{if(started||failed)return;failed=true;clearTimeout(dog);
+      if(n===1){s.cancel();setTimeout(()=>attempt(2),150)}
+      else if(report!=='auto')toast('Nie słychać? '+why+' Sprawdź głośność multimediów i „Zamiana tekstu na mowę” w ustawieniach Androida.')};
+    u.onstart=()=>{started=true;clearTimeout(dog);ttsInfo=`głos: ${(u.voice&&u.voice.name)||'domyślny'}, próba ${n}`;if(report===true)toast('🔊 Gra: '+ttsInfo)};
+    u.onerror=e=>{if(e.error==='interrupted'||e.error==='canceled')return;fail('Błąd: '+e.error+'.')};
+    const dog=setTimeout(()=>fail('Syntezator nie ruszył.'),2500);
+    ttsUtt=u;s.speak(u)};
+  busy?setTimeout(()=>attempt(1),120):attempt(1)}
+if('speechSynthesis'in window){speechSynthesis.getVoices();speechSynthesis.onvoiceschanged=()=>{}}// rozgrzewka listy głosów
+function ttsTest(){const vs='speechSynthesis'in window?speechSynthesis.getVoices():[],en=vs.filter(v=>/^en/i.test(v.lang)).length,v=vs.length?ttsVoice():null;
+  toast(`Głosy: ${vs.length} (angielskie: ${en}). Wybrany: ${v?v.name:'domyślny'}. Odtwarzam…`);
+  setTimeout(()=>say('Hello! This is a sound test.',0.95,true),600)}
+let toastT=null;
+function toast(msg){let t=$('#toast');if(!t){t=document.createElement('div');t.id='toast';t.className='toast';document.body.appendChild(t)}
+  t.textContent=msg;t.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),5000)}
 
 // ---------- vocab + SM-2 ----------
 function allWords(){return WORDS.concat(S.custom)}
@@ -115,7 +142,7 @@ V.home=()=>{const {due,fresh}=dueList();const learned=Object.values(S.cards).fil
   <label>Talia słówek</label><select onchange="S.settings.deck=this.value;save();render()">
   ${[['b2','Ścieżka B1 → B2+'],['all','Wszystkie'],['it','IT / technika'],['work','Praca i komunikacja'],['general','Ogólne B1–B2'],['custom','Moje słowa']].map(([v,l])=>`<option value="${v}" ${S.settings.deck===v?'selected':''}>${l}</option>`).join('')}</select>
   <label>Nowych słów dziennie</label><input type="number" min="0" max="50" value="${S.settings.newPerDay}" onchange="S.settings.newPerDay=+this.value||0;save()">
-  <div class="row" style="margin-top:12px"><button onclick="go('add')">➕ Dodaj słowo</button><button onclick="go('test')">🎯 Test</button><button onclick="exportData()">⬇️ Eksport</button><button onclick="$('#imp').click()">⬆️ Import</button></div>
+  <div class="row" style="margin-top:12px"><button onclick="go('add')">➕ Dodaj słowo</button><button onclick="go('test')">🎯 Test</button><button onclick="ttsTest()">🔊 Dźwięk</button><button onclick="exportData()">⬇️ Eksport</button><button onclick="$('#imp').click()">⬆️ Import</button></div>
   <input type="file" id="imp" accept=".json" class="hidden" onchange="importData(this.files[0])"></div>
   ${remindCard()}`};
 
@@ -125,7 +152,7 @@ V.cards=()=>{const {due,fresh}=dueList();const queue=due.concat(fresh);
   if(!cur||!queue.find(w=>wid(w)===wid(cur))){cur=queue[0];shown=false;mode=Math.random()<.5?'en2pl':'pl2en'}
   const w=cur,isNew=!S.cards[wid(w)];
   const front=mode==='en2pl'?`<div class="big">${esc(w.en)}</div><div class="muted">${esc(w.ipa||'')}</div>`:`<div class="big">${esc(w.pl)}</div><div class="muted">przetłumacz na angielski</div>`;
-  if(mode==='en2pl'&&!shown)setTimeout(()=>say(w.en),150);
+  if(mode==='en2pl'&&!shown)setTimeout(()=>say(w.en,0.95,'auto'),150);
   return `<div class="muted" style="margin-bottom:8px">${due.length} powtórek · ${fresh.length} nowych</div>
   <div class="card">${tags(w)}${isNew?'<span class="pill">nowe</span>':''}
   ${front}
@@ -234,7 +261,7 @@ function rec(){if(!SR||listening)return;const r=new SR();r.lang='en-GB';r.interi
   try{r.start()}catch(e){done()}}
 
 let ls=null,lsRes=null;
-V.listen=()=>{if(!ls){ls=SENTENCES[Math.floor(Math.random()*SENTENCES.length)];lsRes=null;setTimeout(()=>say(ls.en,0.9),200)}
+V.listen=()=>{if(!ls){ls=SENTENCES[Math.floor(Math.random()*SENTENCES.length)];lsRes=null;setTimeout(()=>say(ls.en,0.9,'auto'),200)}
   return `<div class="card"><div class="muted">Posłuchaj i zapisz zdanie:</div>
   <div class="row" style="margin:10px 0"><button onclick="say(ls.en,0.9)">🔊 Odtwórz</button><button onclick="say(ls.en,0.6)">🐢 Wolniej</button></div>
   <textarea id="dict" rows="3" placeholder="Wpisz to, co słyszysz…" ${lsRes?'disabled':''}>${lsRes?esc(lsRes.typed):''}</textarea>
@@ -273,7 +300,7 @@ let cvLast='chat';// co ponawia przycisk „Ponów”
 async function cvCall(){cvLast='chat';cvBusy=true;cvErr='';render();cvWait(true);
   try{const d=await api('/chat',payload());
     const last=cv.history[cv.history.length-1];if(last&&last.role==='user')last.corrections=d.corrections||[];
-    cv.history.push({role:'bot',text:d.reply});cv.finished=!!d.finished;saveCv();say(d.reply);markActive()}
+    cv.history.push({role:'bot',text:d.reply});cv.finished=!!d.finished;saveCv();say(d.reply,0.95,'auto');markActive()}
   catch(e){cvErr=e.message}
   cvWait(false);cvBusy=false;render();const box=$('#cv_log');if(box)box.scrollIntoView({block:'end'})}
 async function cvSend(){if(cvBusy)return;cvMicDone();const t=($('#cv_in').value||'').trim();
